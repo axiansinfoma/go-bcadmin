@@ -194,7 +194,7 @@ func (s *AppsService) Update(ctx context.Context, appID string, opts UpdateAppOp
 	if opts.TargetVersion == "" {
 		return nil, errors.New("bcadmin: UpdateAppOptions.TargetVersion is required")
 	}
-	return s.startAppOperation(ctx, 6, appID, "applications/{}/environments/{}/apps/{}/update", opts)
+	return s.startAppOperation(ctx, 0, appID, "applications/{}/environments/{}/apps/{}/update", opts)
 }
 
 // CancelUpdate cancels a scheduled update of a global app and returns the
@@ -258,8 +258,8 @@ func (s *AppsService) GetOperation(ctx context.Context, appID, operationID strin
 	if s.err != nil {
 		return nil, s.err
 	}
-	// The documentation does not show whether the single operation is
-	// wrapped in {"value": [...]}; accept both.
+	// The documentation describes a plain object; the wrapped form
+	// {"value": [...]} of the list endpoint is accepted defensively.
 	var raw struct {
 		Operation
 		Value []Operation `json:"value"`
@@ -269,6 +269,10 @@ func (s *AppsService) GetOperation(ctx context.Context, appID, operationID strin
 		return nil, err
 	}
 	if raw.Value == nil {
+		if raw.ID != "" && !asciiEqualFold(raw.ID, operationID) {
+			return nil, fmt.Errorf("bcadmin: operation %s of app %s: response is for operation %s: %w",
+				clean(operationID), clean(appID), clean(raw.ID), ErrNotFound)
+		}
 		return &raw.Operation, nil
 	}
 	for i := range raw.Value {
@@ -296,7 +300,8 @@ func (s *AppsService) fetcher(appID, operationID string) func(context.Context) (
 }
 
 // startAppOperation sends a POST that starts an operation on appID and
-// returns a poller for it. App operations exist since API v2.minMinor.
+// returns a poller for it. minMinor is the documented minimum minor API
+// version of the endpoint (v2.minMinor); 0 means none is documented.
 func (s *AppsService) startAppOperation(ctx context.Context, minMinor int, appID, template string, body any) (*Poller[*Operation], error) {
 	if !s.c.apiVersionAtLeast(2, minMinor) {
 		return nil, fmt.Errorf("bcadmin: %s needs API version v2.%d or later, client uses %s", template, minMinor, s.c.apiVersion)

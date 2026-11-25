@@ -116,8 +116,9 @@ make check    # tidy, lint, test, vuln
   (`minorTrackable*` constants in environments.go).
 - `Get environment` is documented as wrapped in `{"value": [...]}`, but the
   service returns the object; `EnvironmentsService.Get` accepts both.
-- A single app operation (`apps/{appId}/operations/{id}`) is not documented
-  as plain or wrapped; `AppsService.GetOperation` accepts both.
+- A single app operation (`apps/{appId}/operations/{id}`) is documented as a
+  plain object; `AppsService.GetOperation` also accepts the wrapped list form
+  and checks the operation ID in both.
 - The PTE upload body must be seekable (azcore sets Content-Length and
   rewinds it on retry); never read the file into memory.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no

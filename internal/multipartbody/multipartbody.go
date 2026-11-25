@@ -12,6 +12,7 @@ import (
 	"net/textproto"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Field is a form field sent before the file.
@@ -20,7 +21,8 @@ type Field struct {
 	Value string
 }
 
-// Body is a seekable multipart body. Close does not close the file.
+// Body is a seekable multipart body. Close does not close the file. A Body is
+// not safe for concurrent use: it shares its offset and the file position.
 type Body struct {
 	parts  []io.ReadSeeker
 	sizes  []int64
@@ -34,6 +36,9 @@ type Body struct {
 // fileField with the given file name. The file is read from its current start
 // (offset 0) to its end.
 func New(fields []Field, fileField, fileName string, file io.ReadSeeker) (*Body, error) {
+	if err := validHeaderValue(fileField); err != nil {
+		return nil, fmt.Errorf("file field name: %w", err)
+	}
 	if err := validHeaderValue(fileName); err != nil {
 		return nil, fmt.Errorf("file name: %w", err)
 	}
@@ -53,7 +58,7 @@ func New(fields []Field, fileField, fileName string, file io.ReadSeeker) (*Body,
 		}
 	}
 	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, fileField, fileName))
+	h.Set("Content-Disposition", `form-data; name="`+fileField+`"; filename="`+fileName+`"`)
 	h.Set("Content-Type", "application/octet-stream")
 	if _, err := w.CreatePart(h); err != nil {
 		return nil, err
@@ -67,14 +72,19 @@ func New(fields []Field, fileField, fileName string, file io.ReadSeeker) (*Body,
 	return b, nil
 }
 
-// validHeaderValue rejects values that cannot be placed in a quoted MIME
-// header parameter without changing the header.
+// validHeaderValue rejects values that cannot be placed verbatim in a quoted
+// MIME header parameter: empty values, invalid UTF-8, characters that are
+// not printable (controls, format characters, separators other than the
+// space) and quotes or backslashes.
 func validHeaderValue(s string) error {
 	if s == "" {
 		return errors.New("empty")
 	}
+	if !utf8.ValidString(s) {
+		return fmt.Errorf("%q is not valid UTF-8", s)
+	}
 	for _, r := range s {
-		if unicode.IsControl(r) || r == '"' || r == '\\' {
+		if !unicode.IsPrint(r) || r == '"' || r == '\\' {
 			return fmt.Errorf("%q contains %q", s, r)
 		}
 	}

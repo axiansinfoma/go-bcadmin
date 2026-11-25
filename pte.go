@@ -65,8 +65,9 @@ type InstallPTEOptions struct {
 
 // InstallPTE uploads a per-tenant extension (.app file) and schedules its
 // installation; it returns a poller for the install operation. file is read
-// from its start; it must not change until the request is done. The file is
-// streamed, not loaded into memory, and may be up to [MaxPTESize] bytes.
+// from its start, whatever its current position, and must not change until
+// the request is done; InstallPTE leaves its position undefined. The file
+// is streamed, not loaded into memory, and may be up to [MaxPTESize] bytes.
 // Available since API v2.29.
 //
 // With a deployment schedule other than Immediate, the operation stays
@@ -112,11 +113,6 @@ func (s *AppsService) InstallPTE(ctx context.Context, file io.ReadSeeker, opts I
 	}
 	if opts.LanguageID != "" {
 		fields = append(fields, multipartbody.Field{Name: "languageId", Value: opts.LanguageID})
-	}
-	for _, f := range fields {
-		if strings.ContainsAny(f.Value, "\r\n") {
-			return nil, fmt.Errorf("bcadmin: invalid value for %s", f.Name)
-		}
 	}
 	body, err := multipartbody.New(fields, "extensionFile", name, file)
 	if err != nil {

@@ -173,7 +173,7 @@ func (s *UpdatesService) patch(ctx context.Context, targetVersion string, select
 // CancelRunning cancels a running update (or data upgrade) operation of the
 // environment and restores the environment to its state before the update.
 // The operation must have status Running, and the environment must not be in
-// its enforced update period. Available since API v2.28.
+// its enforced update period.
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/operations/{operationId}/cancel.
 func (s *UpdatesService) CancelRunning(ctx context.Context, operationID string) error {

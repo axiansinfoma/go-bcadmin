@@ -290,7 +290,6 @@ func TestInstallPTEValidation(t *testing.T) {
 		"not .app":         {FileName: "x.zip"},
 		"header injection": {FileName: "x\r\nX-Injected: 1.app"},
 		"quote":            {FileName: `x".app`},
-		"bad language":     {FileName: "x.app", LanguageID: "en\r\nX: y"},
 	} {
 		if _, err := apps.InstallPTE(ctx, small, opts); err == nil {
 			t.Errorf("%s: no error", name)
@@ -450,5 +449,16 @@ func TestAppsThroughBoundEnvironmentAndResume(t *testing.T) {
 	}
 	if _, err := env.Apps().ResumeOperation(appID, ""); err == nil {
 		t.Error("ResumeOperation with empty ID did not fail")
+	}
+}
+
+func TestAppGetOperationPlainOtherID(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "applications/{family}/environments/{env}/apps/{app}/operations/{id}", http.StatusOK,
+		map[string]any{"id": "other", "status": "succeeded"})
+	_, err := srv.NewClient(t).Apps(bc, "sb").GetOperation(context.Background(), appID, "op-1")
+	if !bcadmin.IsNotFound(err) {
+		t.Errorf("error = %v", err)
 	}
 }

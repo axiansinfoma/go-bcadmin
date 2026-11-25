@@ -127,16 +127,28 @@ var re *bcadmin.ResponseError
 if errors.As(err, &re) && re.Data != nil {
 	// Missing dependencies: re.Data.Requirements
 }
+if err != nil {
+	return err
+}
 op, err := p.Wait(ctx, nil)
+if err != nil {
+	return err
+}
 
 // Upload a per-tenant extension (streamed, up to 50 MB).
 f, err := os.Open("Contoso_MyApp_1.0.0.0.app")
+if err != nil {
+	return err
+}
 defer f.Close()
 pte, err := apps.InstallPTE(ctx, f, bcadmin.InstallPTEOptions{
 	FileName:           "Contoso_MyApp_1.0.0.0.app",
 	AcceptISVEULA:      true,
 	DeploymentSchedule: bcadmin.DeploymentUpdateWindow,
 })
+if err != nil {
+	return err
+}
 _, err = pte.Wait(ctx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
 
 // Select the next update and its start time.
@@ -281,7 +293,7 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Apps | `GET .../environments/{name}/apps` | `Apps(...).List`, `Environment.Apps().List` | | ✅ |
 | Apps | `GET .../apps/availableUpdates` | `Apps(...).AvailableUpdates` | | ✅ |
 | Apps | `POST .../apps/{appId}/install` | `Apps(...).Install` | v2.6 | ✅ |
-| Apps | `POST .../apps/{appId}/update` | `Apps(...).Update` | v2.6 | ✅ |
+| Apps | `POST .../apps/{appId}/update` | `Apps(...).Update` |  | ✅ |
 | Apps | `POST .../apps/{appId}/update/cancel` | `Apps(...).CancelUpdate` | | ✅ |
 | Apps | `POST .../apps/{appId}/uninstall` | `Apps(...).Uninstall` | v2.6 | ✅ |
 | Apps | `GET .../apps/{appId}/uninstallRequirements` | `Apps(...).UninstallRequirements` | v2.25 | ✅ |
@@ -291,7 +303,7 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Per-tenant extensions | `POST .../apps/{appId}/removeScheduledPteVersion` | `Apps(...).RemoveScheduledPTEVersion` | v2.29 | ✅ |
 | Updates | `GET .../environments/{name}/updates` | `Updates(...).List`, `Environment.Updates().List` | | ✅ |
 | Updates | `PATCH .../environments/{name}/updates/{version}` | `Updates(...).Select`, `Reschedule` | | ✅ |
-| Updates | `POST .../environments/{name}/operations/{id}/cancel` | `Updates(...).CancelRunning` | v2.28 | ✅ |
+| Updates | `POST .../environments/{name}/operations/{id}/cancel` | `Updates(...).CancelRunning` |  | ✅ |
 | Settings | update window, time zones, Application Insights, security group, partner access, Microsoft 365 licenses, AppSource update cadence | | | 🚧 |
 | Sessions | list, get, terminate | | | 🚧 |
 | Database export | metrics, start, history | | | 🚧 |

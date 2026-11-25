@@ -63,7 +63,7 @@ func TestBody(t *testing.T) {
 
 func TestBodyRejectsBadFileName(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"", "a\r\nX-Injected: 1.app", `a"b.app`, `a\b.app`} {
+	for _, name := range []string{"", "a\r\nX-Injected: 1.app", `a"b.app`, `a\b.app`, "My\u00a0App.app", "a\u200bb.app", "a\u202eb.app", "a\xffb.app"} {
 		if _, err := New(nil, "extensionFile", name, strings.NewReader("x")); err == nil {
 			t.Errorf("New with file name %q did not fail", name)
 		}
@@ -100,4 +100,20 @@ func (s *shrinking) Read(p []byte) (int, error) {
 		}
 	}
 	return s.Reader.Read(p)
+}
+
+func TestBodyFileNameVerbatim(t *testing.T) {
+	t.Parallel()
+	b, err := New(nil, "extensionFile", "Café Müller_1.0.0.0.app", strings.NewReader("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `Content-Disposition: form-data; name="extensionFile"; filename="Café Müller_1.0.0.0.app"`
+	if !bytes.Contains(raw, []byte(want)) {
+		t.Errorf("body does not contain %q:\n%s", want, raw)
+	}
 }
