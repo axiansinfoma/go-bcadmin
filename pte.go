@@ -82,8 +82,8 @@ func (s *AppsService) InstallPTE(ctx context.Context, file io.ReadSeeker, opts I
 	if s.err != nil {
 		return nil, s.err
 	}
-	if !s.c.apiVersionAtLeast(2, 29) {
-		return nil, fmt.Errorf("bcadmin: pteInstall needs API version v2.29 or later, client uses %s", s.c.apiVersion)
+	if err := s.needVersion("pteInstall", 29); err != nil {
+		return nil, err
 	}
 	if file == nil {
 		return nil, errors.New("bcadmin: file is required")
@@ -126,7 +126,8 @@ func (s *AppsService) InstallPTE(ctx context.Context, file io.ReadSeeker, opts I
 		return nil, err
 	}
 	if op.ID == "" || op.AppID == "" {
-		return nil, errors.New("bcadmin: pteInstall was accepted but the response contains no operation or app ID to track; check the scheduled operations before trying again")
+		return nil, fmt.Errorf("bcadmin: pteInstall was accepted but the response lacks the operation ID (%q) or app ID (%q) needed to track it; check the app's operations and the scheduled PTE operations before trying again",
+			clean(op.ID), clean(op.AppID))
 	}
 	return newPoller(s.c, &op, s.fetcher(op.AppID, op.ID), operationResult), nil
 }
@@ -148,6 +149,9 @@ func (s *AppsService) ScheduledPTEOperations(ctx context.Context) ([]Operation, 
 	if s.err != nil {
 		return nil, s.err
 	}
+	if err := s.needVersion("scheduledPteOperations", 29); err != nil {
+		return nil, err
+	}
 	return listAll[Operation](ctx, s.c, "applications/{}/environments/{}/apps/scheduledPteOperations", s.family, s.env)
 }
 
@@ -159,6 +163,9 @@ func (s *AppsService) ScheduledPTEOperations(ctx context.Context) ([]Operation, 
 func (s *AppsService) RemoveScheduledPTEVersion(ctx context.Context, appID string, opts RemoveScheduledPTEVersionOptions) (*Operation, error) {
 	if s.err != nil {
 		return nil, s.err
+	}
+	if err := s.needVersion("removeScheduledPteVersion", 29); err != nil {
+		return nil, err
 	}
 	if opts.TargetVersion == "" || opts.ScheduleKind == "" {
 		return nil, errors.New("bcadmin: RemoveScheduledPTEVersionOptions.TargetVersion and ScheduleKind are required")

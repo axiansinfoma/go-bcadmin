@@ -54,7 +54,9 @@ var apiVersionPattern = regexp.MustCompile(`^v\d+\.\d+$`)
 //     of the process, pools up to 100 idle connections, prefers HTTP/2,
 //     requires TLS 1.2 and follows redirects only to the same scheme and
 //     host; a custom Transport is responsible for its own pooling and
-//     redirect policy.
+//     redirect policy. A PerRetryPolicies policy must not call
+//     RewindBody: uploads give every attempt its own body reader, and a
+//     rewind would make attempts share one again.
 //   - InsecureAllowCredentialWithHTTP allows an http:// endpoint, which sends
 //     the bearer token in clear text. Use it only for tests.
 type ClientOptions struct {

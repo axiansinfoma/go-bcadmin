@@ -116,6 +116,10 @@ make check    # tidy, lint, test, vuln
   (`minorTrackable*` constants in environments.go).
 - `Get environment` is documented as wrapped in `{"value": [...]}`, but the
   service returns the object; `EnvironmentsService.Get` accepts both.
+- App and PTE methods whose endpoint has a documented "INTRODUCED IN" version
+  later than v2.0 check it with `AppsService.needVersion` before sending, so an
+  old client gets a clear error instead of a 404 that looks like "not found".
+  Endpoints without a documented version are not checked.
 - A single app operation (`apps/{appId}/operations/{id}`) is documented as a
   plain object; `AppsService.GetOperation` also accepts the wrapped list form
   and checks the operation ID in both.

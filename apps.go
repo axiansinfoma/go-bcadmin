@@ -179,7 +179,7 @@ func (s *AppsService) Install(ctx context.Context, appID string, opts InstallApp
 	if opts.AllowPreviewVersion && opts.TargetVersion == "" {
 		return nil, errors.New("bcadmin: InstallAppOptions.TargetVersion is required with AllowPreviewVersion")
 	}
-	return s.startAppOperation(ctx, 6, appID, "applications/{}/environments/{}/apps/{}/install", opts)
+	return s.startAppOperation(ctx, "install", 6, appID, "applications/{}/environments/{}/apps/{}/install", opts)
 }
 
 // Update updates a global app to opts.TargetVersion and returns a poller for
@@ -194,7 +194,7 @@ func (s *AppsService) Update(ctx context.Context, appID string, opts UpdateAppOp
 	if opts.TargetVersion == "" {
 		return nil, errors.New("bcadmin: UpdateAppOptions.TargetVersion is required")
 	}
-	return s.startAppOperation(ctx, 0, appID, "applications/{}/environments/{}/apps/{}/update", opts)
+	return s.startAppOperation(ctx, "update", 0, appID, "applications/{}/environments/{}/apps/{}/update", opts)
 }
 
 // CancelUpdate cancels a scheduled update of a global app and returns the
@@ -227,7 +227,7 @@ func (s *AppsService) Uninstall(ctx context.Context, appID string, opts Uninstal
 	if s.err != nil {
 		return nil, s.err
 	}
-	return s.startAppOperation(ctx, 6, appID, "applications/{}/environments/{}/apps/{}/uninstall", opts)
+	return s.startAppOperation(ctx, "uninstall", 6, appID, "applications/{}/environments/{}/apps/{}/uninstall", opts)
 }
 
 // UninstallRequirements returns the apps that depend on the app and would
@@ -237,6 +237,9 @@ func (s *AppsService) Uninstall(ctx context.Context, appID string, opts Uninstal
 func (s *AppsService) UninstallRequirements(ctx context.Context, appID string) ([]UninstallRequirement, error) {
 	if s.err != nil {
 		return nil, s.err
+	}
+	if err := s.needVersion("uninstallRequirements", 25); err != nil {
+		return nil, err
 	}
 	return listAll[UninstallRequirement](ctx, s.c, "applications/{}/environments/{}/apps/{}/uninstallRequirements", s.family, s.env, appID)
 }
@@ -299,19 +302,29 @@ func (s *AppsService) fetcher(appID, operationID string) func(context.Context) (
 	return func(ctx context.Context) (*Operation, error) { return s.GetOperation(ctx, appID, operationID) }
 }
 
-// startAppOperation sends a POST that starts an operation on appID and
-// returns a poller for it. minMinor is the documented minimum minor API
-// version of the endpoint (v2.minMinor); 0 means none is documented.
-func (s *AppsService) startAppOperation(ctx context.Context, minMinor int, appID, template string, body any) (*Poller[*Operation], error) {
+// needVersion returns an error if the client's API version is older than
+// v2.minMinor, the version in which the endpoint called name was introduced.
+func (s *AppsService) needVersion(name string, minMinor int) error {
 	if !s.c.apiVersionAtLeast(2, minMinor) {
-		return nil, fmt.Errorf("bcadmin: %s needs API version v2.%d or later, client uses %s", template, minMinor, s.c.apiVersion)
+		return fmt.Errorf("bcadmin: %s needs API version v2.%d or later, client uses %s", name, minMinor, s.c.apiVersion)
+	}
+	return nil
+}
+
+// startAppOperation sends a POST that starts the operation name (install,
+// update, uninstall) on appID and returns a poller for it. minMinor is the
+// documented minimum minor API version of the endpoint (v2.minMinor); 0
+// means none is documented.
+func (s *AppsService) startAppOperation(ctx context.Context, name string, minMinor int, appID, template string, body any) (*Poller[*Operation], error) {
+	if err := s.needVersion("app "+name, minMinor); err != nil {
+		return nil, err
 	}
 	var op Operation
 	if err := s.c.call(ctx, http.MethodPost, template, []string{s.family, s.env, appID}, body, &op); err != nil {
 		return nil, err
 	}
 	if op.ID == "" {
-		return nil, fmt.Errorf("bcadmin: POST %s was accepted but the response contains no operation to track; check the app's operations before trying again", template)
+		return nil, fmt.Errorf("bcadmin: app %s of %s was accepted but the response contains no operation to track; check the app's operations before trying again", name, clean(appID))
 	}
 	return newPoller(s.c, &op, s.fetcher(appID, op.ID), operationResult), nil
 }

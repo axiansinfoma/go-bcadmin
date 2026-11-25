@@ -64,6 +64,9 @@ func New(fields []Field, fileField, fileName string, file io.ReadSeeker) (*Body,
 	if err != nil {
 		return nil, fmt.Errorf("determining file size: %w", err)
 	}
+	if fileSize < 0 {
+		return nil, fmt.Errorf("file size %d is negative", fileSize)
+	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("rewinding file: %w", err)
 	}

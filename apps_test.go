@@ -594,3 +594,48 @@ func (f *countingFile) ReadAt(p []byte, off int64) (int, error) {
 	f.calls.Add(1)
 	return f.Reader.ReadAt(p, off)
 }
+
+// TestAppsVersionGuards checks that endpoints introduced after the client's
+// API version fail locally with a message naming the endpoint and version.
+func TestAppsVersionGuards(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.24"))
+	apps := srv.NewClient(t).Apps(bc, "sb")
+	checks := map[string]func() error{
+		"uninstallRequirements v2.25":  func() error { _, err := apps.UninstallRequirements(ctx, appID); return err },
+		"scheduledPteOperations v2.29": func() error { _, err := apps.ScheduledPTEOperations(ctx); return err },
+		"removeScheduledPteVersion v2.29": func() error {
+			_, err := apps.RemoveScheduledPTEVersion(ctx, appID, bcadmin.RemoveScheduledPTEVersionOptions{TargetVersion: "2.0.0.0", ScheduleKind: bcadmin.DeploymentUpdateWindow})
+			return err
+		},
+	}
+	old := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.5"))
+	oldApps := old.NewClient(t).Apps(bc, "sb")
+	checks["app install v2.6"] = func() error { _, err := oldApps.Install(ctx, appID, bcadmin.InstallAppOptions{}); return err }
+	for want, call := range checks {
+		i := strings.LastIndex(want, " ")
+		name, version := want[:i], want[i+1:]
+		err := call()
+		if err == nil || !strings.Contains(err.Error(), name+" needs API version "+version) {
+			t.Errorf("%s: error = %v", name, err)
+		}
+	}
+	if n := len(srv.Requests()) + len(old.Requests()); n != 0 {
+		t.Errorf("requests = %d, want 0", n)
+	}
+}
+
+// TestInstallPTEMissingAppID checks that an accepted upload whose response
+// cannot be tracked returns the operation ID it got.
+func TestInstallPTEMissingAppID(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "applications/{family}/environments/{env}/apps/pteInstall", http.StatusOK,
+		map[string]any{"id": "00000000-0000-0000-0000-000000000401", "status": "running"})
+	_, err := srv.NewClient(t).Apps(bc, "sb").InstallPTE(context.Background(), bytes.NewReader([]byte("x")),
+		bcadmin.InstallPTEOptions{FileName: "x.app"})
+	if err == nil || !strings.Contains(err.Error(), "00000000-0000-0000-0000-000000000401") || !strings.Contains(err.Error(), "app's operations") {
+		t.Errorf("error = %v", err)
+	}
+}
