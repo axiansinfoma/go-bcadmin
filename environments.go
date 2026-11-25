@@ -8,7 +8,18 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/axiansinfoma/go-bcadmin/internal/pathutil"
 )
+
+// validName checks a new environment name that is sent in a request body, so
+// that the poller can request the environment by that name afterwards.
+func validName(name string) error {
+	if err := pathutil.ValidateSegment(name); err != nil {
+		return fmt.Errorf("bcadmin: invalid environment name: %w", err)
+	}
+	return nil
+}
 
 // errUnbound is returned by methods of an Environment that was not returned
 // by a client.
@@ -149,6 +160,9 @@ func (s *EnvironmentsService) Get(ctx context.Context, family, name string) (*En
 		return nil, err
 	}
 	env := raw.Environment
+	if raw.Value != nil && len(raw.Value) == 0 {
+		return nil, fmt.Errorf("bcadmin: environment %s/%s: empty response: %w", clean(family), clean(name), ErrNotFound)
+	}
 	if len(raw.Value) > 0 {
 		env = raw.Value[0]
 		for _, v := range raw.Value {
@@ -174,8 +188,9 @@ func (s *EnvironmentsService) Get(ctx context.Context, family, name string) (*En
 // Create creates an environment and returns a poller for the creation.
 // The poller's result is the new environment.
 //
-// The request is not retried on server errors, because the environment may
-// already be being created; check [EnvironmentsService.Get] or the tenant's
+// Needs API v2.9 or later, which returns the operation. The request is not
+// retried on server errors, because the environment may already be being
+// created; check [EnvironmentsService.Get] or the tenant's
 // operations before trying again.
 //
 // PUT /applications/{applicationFamily}/environments/{environmentName}.
@@ -195,6 +210,9 @@ func (s *EnvironmentsService) Create(ctx context.Context, family, name string, o
 func (s *EnvironmentsService) Copy(ctx context.Context, family, source, target string, targetType EnvironmentType) (*Poller[*Environment], error) {
 	if target == "" || targetType == "" {
 		return nil, errors.New("bcadmin: target name and type are required")
+	}
+	if err := validName(target); err != nil {
+		return nil, err
 	}
 	body := struct {
 		EnvironmentName string          `json:"environmentName"`
@@ -237,6 +255,9 @@ func (s *EnvironmentsService) Rename(ctx context.Context, family, name, newName 
 	if newName == "" {
 		return nil, errors.New("bcadmin: new environment name is required")
 	}
+	if err := validName(newName); err != nil {
+		return nil, err
+	}
 	body := struct {
 		NewEnvironmentName string `json:"NewEnvironmentName"`
 	}{newName}
@@ -253,6 +274,9 @@ func (s *EnvironmentsService) Rename(ctx context.Context, family, name, newName 
 func (s *EnvironmentsService) Restore(ctx context.Context, family, name string, opts RestoreOptions) (*Poller[*Environment], error) {
 	if opts.EnvironmentName == "" || opts.EnvironmentType == "" || opts.PointInTime.IsZero() {
 		return nil, errors.New("bcadmin: RestoreOptions.EnvironmentName, EnvironmentType and PointInTime are required")
+	}
+	if err := validName(opts.EnvironmentName); err != nil {
+		return nil, err
 	}
 	type wire RestoreOptions
 	body := struct {
@@ -353,7 +377,8 @@ func (s *EnvironmentsService) MatchProductionConfigurationMetrics(ctx context.Co
 // MatchProductionConfiguration applies the database configuration of a
 // typical production environment to the sandbox for a limited time (72
 // hours) and returns a poller for the operation. When the period ends, the
-// service returns the sandbox to its configuration automatically.
+// service returns the sandbox to its configuration automatically. Needs API
+// v2.9 or later.
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/matchProductionConfiguration.
 func (s *EnvironmentsService) MatchProductionConfiguration(ctx context.Context, family, name string) (*Poller[*Operation], error) {
@@ -454,7 +479,12 @@ func (s *EnvironmentsService) startEnvironmentOperation(ctx context.Context, min
 // environments that were deleted. Environment operation lists exist since
 // API v2.6.
 func (s *EnvironmentsService) operationFetcher(family, name, id string, more ...string) func(context.Context) (*Operation, error) {
-	names := append([]string{name}, more...)
+	names := []string{name}
+	for _, n := range more {
+		if !asciiEqualFold(n, name) {
+			names = append(names, n)
+		}
+	}
 	return func(ctx context.Context) (*Operation, error) {
 		if s.c.apiVersionAtLeast(2, 28) {
 			return s.c.Tenant().GetOperation(ctx, id)

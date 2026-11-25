@@ -2,6 +2,7 @@ package bcadmintest_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -103,11 +104,13 @@ func TestEnvironmentsFakeConflictsAndCopies(t *testing.T) {
 		t.Errorf("operations of a missing environment: %v", err)
 	}
 
-	if ops := fake.Operations(); len(ops) > 0 && ops[0].Parameters != nil {
-		ops[0].Parameters["countryCode"] = "XX"
-		if fake.Operations()[0].Parameters["countryCode"] == "XX" {
-			t.Error("Operations does not return deep copies")
-		}
+	ops := fake.Operations()
+	if len(ops) == 0 || ops[0].Parameters == nil {
+		t.Fatalf("expected an operation with parameters, got %+v", ops)
+	}
+	ops[0].Parameters["countryCode"] = "XX"
+	if fake.Operations()[0].Parameters["countryCode"] == "XX" {
+		t.Error("Operations does not return deep copies")
 	}
 	// Operations on a busy environment are refused.
 	if _, err := envs.Delete(ctx, fam, "c"); bcadmin.ErrorCode(err) != "environmentOperationInProgress" {
@@ -165,5 +168,47 @@ func TestEnvironmentsFakeDeleteRules(t *testing.T) {
 	}
 	if fp.Operation().ErrorMessage != "" {
 		t.Error("the error message is in the 202 response")
+	}
+	_, err = fp.Wait(ctx, nil)
+	if oe, ok := errors.AsType[*bcadmin.OperationError](err); !ok || oe.Operation.ErrorMessage != "boom" {
+		t.Errorf("failed create: %v", err)
+	}
+	if env, ok := fake.Get(fam, "new"); !ok || !env.Status.Is(bcadmin.EnvironmentStatusCreatingFailed) {
+		t.Errorf("environment after failed create = %+v, %v", env, ok)
+	}
+}
+
+func TestEnvironmentsFakeValidationAndMatchState(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	fake := srv.EnableEnvironments()
+	fake.Add(bcadmin.Environment{Name: "sb", Type: bcadmin.EnvironmentTypeSandbox})
+	c := srv.NewClient(t)
+	ctx := context.Background()
+	fam := bcadmin.FamilyBusinessCentral
+
+	for path, body := range map[string]map[string]string{
+		"applications/BusinessCentral/environments/sb/copy":    {"environmentName": "", "type": ""},
+		"applications/BusinessCentral/environments/sb/rename":  {"NewEnvironmentName": ""},
+		"applications/BusinessCentral/environments/sb/restore": {"EnvironmentName": "x"},
+	} {
+		if err := c.Do(ctx, http.MethodPost, path, body, nil); bcadmin.ErrorCode(err) != "invalidInput" {
+			t.Errorf("%s with %v: %v", path, body, err)
+		}
+	}
+
+	p, err := c.Environments().MatchProductionConfiguration(ctx, fam, "sb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Wait(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	m, err := c.Environments().MatchProductionConfigurationMetrics(ctx, fam, "sb")
+	if err != nil || m.CanMatchProductionConfiguration || m.BlockedReason != "AlreadyActive" || m.RequestsUsedThisMonth != 1 || m.RequestsRemainingThisMonth != 4 {
+		t.Errorf("metrics after match = %+v, %v", m, err)
+	}
+	if _, err := c.Environments().MatchProductionConfiguration(ctx, fam, "sb"); bcadmin.ErrorCode(err) != "productionConfigurationAlreadyActive" {
+		t.Errorf("second match: %v", err)
 	}
 }

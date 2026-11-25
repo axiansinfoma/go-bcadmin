@@ -33,7 +33,15 @@ type Environments struct {
 	polls   int
 	failMsg string
 	nextID  int
+	// matchUsed counts match production configuration requests this month;
+	// matchActive holds the environments that have the configuration.
+	matchUsed   int
+	matchActive map[string]bool
 }
+
+// matchPerMonth is the fake's monthly allowance of match production
+// configuration requests.
+const matchPerMonth = 5
 
 type fakeOperation struct {
 	op       bcadmin.Operation
@@ -51,7 +59,7 @@ type fakeOperation struct {
 // operation and tenant operation endpoints and returns the store behind
 // them. Do not register handlers for these paths yourself afterwards.
 func (s *Server) EnableEnvironments() *Environments {
-	e := &Environments{envs: map[string]*bcadmin.Environment{}, polls: 1}
+	e := &Environments{envs: map[string]*bcadmin.Environment{}, polls: 1, matchActive: map[string]bool{}}
 	const env = "applications/{family}/environments/{env}"
 	s.Handle(http.MethodGet, "applications/environments", e.handleList)
 	s.Handle(http.MethodGet, "applications/{family}/environments", e.handleList)
@@ -410,6 +418,10 @@ func (e *Environments) handleCopy(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	if body.EnvironmentName == "" || body.Type == "" {
+		WriteError(w, http.StatusBadRequest, "invalidInput", "environmentName and type are required")
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	src, ok := e.lookup(w, r)
@@ -460,6 +472,10 @@ func (e *Environments) handleRename(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
+	if body.NewEnvironmentName == "" {
+		WriteError(w, http.StatusBadRequest, "invalidInput", "NewEnvironmentName is required")
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	env, ok := e.lookup(w, r)
@@ -490,6 +506,10 @@ func (e *Environments) handleRestore(w http.ResponseWriter, r *http.Request) {
 		PointInTime     string                  `json:"PointInTime"`
 	}
 	if !decode(w, r, &body) {
+		return
+	}
+	if body.EnvironmentName == "" || body.EnvironmentType == "" || body.PointInTime == "" {
+		WriteError(w, http.StatusBadRequest, "invalidInput", "EnvironmentName, EnvironmentType and PointInTime are required")
 		return
 	}
 	e.mu.Lock()
@@ -581,12 +601,19 @@ func (e *Environments) handleMatchMetrics(w http.ResponseWriter, r *http.Request
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if env, ok := e.lookup(w, r); ok {
-		can := env.Type.Is(bcadmin.EnvironmentTypeSandbox)
 		m := bcadmin.MatchProductionConfigurationMetrics{
-			RequestsPerMonth: 5, RequestsRemainingThisMonth: 5, CanMatchProductionConfiguration: can, DurationInHours: 72,
+			RequestsPerMonth: matchPerMonth, RequestsUsedThisMonth: e.matchUsed,
+			RequestsRemainingThisMonth: matchPerMonth - e.matchUsed, DurationInHours: 72,
 		}
-		if !can {
+		switch {
+		case !env.Type.Is(bcadmin.EnvironmentTypeSandbox) || !env.Status.Is(bcadmin.EnvironmentStatusActive):
 			m.BlockedReason = "NotEligible"
+		case e.matchActive[envKey(env.ApplicationFamily, env.Name)]:
+			m.BlockedReason = "AlreadyActive"
+		case e.matchUsed >= matchPerMonth:
+			m.BlockedReason = "MonthlyLimitReached"
+		default:
+			m.CanMatchProductionConfiguration = true
 		}
 		WriteJSON(w, http.StatusOK, m)
 	}
@@ -603,7 +630,18 @@ func (e *Environments) handleMatch(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "productionConfigurationNotEligible", "The environment isn't an active sandbox.")
 		return
 	}
-	e.start(w, bcadmin.OperationTypeMoveToProductionDBConfig, env.ApplicationFamily, env.Name, env.Type, "", nil, nil, nil)
+	key := envKey(env.ApplicationFamily, env.Name)
+	if e.matchActive[key] {
+		WriteError(w, http.StatusConflict, "productionConfigurationAlreadyActive", "The production configuration is already applied to the environment.")
+		return
+	}
+	if e.matchUsed >= matchPerMonth {
+		WriteError(w, http.StatusConflict, "productionConfigurationMonthlyLimitReached", "The monthly request limit has been reached.")
+		return
+	}
+	e.matchUsed++
+	e.start(w, bcadmin.OperationTypeMoveToProductionDBConfig, env.ApplicationFamily, env.Name, env.Type, "", nil, nil,
+		func(e *Environments) { e.matchActive[key] = true })
 }
 
 func (e *Environments) handleLink(w http.ResponseWriter, r *http.Request) {

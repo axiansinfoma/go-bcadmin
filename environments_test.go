@@ -249,6 +249,21 @@ func TestEnvironmentCreateConflictAndValidation(t *testing.T) {
 	if _, err := c.Environments().Rename(ctx, bc, "uat", ""); err == nil {
 		t.Error("rename without name did not fail")
 	}
+	before := len(srv.Requests())
+	for _, bad := range []string{"a/b", "..", "x\ny"} {
+		if _, err := c.Environments().Rename(ctx, bc, "uat", bad); err == nil {
+			t.Errorf("rename to %q did not fail", bad)
+		}
+		if _, err := c.Environments().Copy(ctx, bc, "uat", bad, bcadmin.EnvironmentTypeSandbox); err == nil {
+			t.Errorf("copy to %q did not fail", bad)
+		}
+		if _, err := c.Environments().Restore(ctx, bc, "uat", bcadmin.RestoreOptions{EnvironmentName: bad, EnvironmentType: "Sandbox", PointInTime: time.Now()}); err == nil {
+			t.Errorf("restore to %q did not fail", bad)
+		}
+	}
+	if n := len(srv.Requests()) - before; n != 0 {
+		t.Errorf("invalid target names sent %d requests", n)
+	}
 }
 
 func TestEnvironmentCreateIsNotRetriedOnServerError(t *testing.T) {
@@ -615,6 +630,50 @@ func TestRenameAndRestoreMinimumVersions(t *testing.T) {
 	}
 	if n := len(srv.Requests()); n != 0 {
 		t.Errorf("requests = %d, want 0", n)
+	}
+}
+
+func TestOperationMinimumVersions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		version string
+		want    string
+		call    func(*bcadmin.EnvironmentsService) error
+	}{
+		{"copy", "v2.8", "v2.9", func(s *bcadmin.EnvironmentsService) error {
+			_, err := s.Copy(ctx, bc, "a", "b", bcadmin.EnvironmentTypeSandbox)
+			return err
+		}},
+		{"delete", "v2.8", "v2.9", func(s *bcadmin.EnvironmentsService) error { _, err := s.Delete(ctx, bc, "a"); return err }},
+		{"match", "v2.8", "v2.9", func(s *bcadmin.EnvironmentsService) error {
+			_, err := s.MatchProductionConfiguration(ctx, bc, "a")
+			return err
+		}},
+		{"recover", "v2.17", "v2.18", func(s *bcadmin.EnvironmentsService) error { _, err := s.Recover(ctx, bc, "a"); return err }},
+		{"rename", "v2.6", "v2.7", func(s *bcadmin.EnvironmentsService) error { _, err := s.Rename(ctx, bc, "a", "b"); return err }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion(tt.version))
+			if err := tt.call(srv.NewClient(t).Environments()); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %v, want mention of %s", err, tt.want)
+			}
+			if n := len(srv.Requests()); n != 0 {
+				t.Errorf("requests = %d, want 0", n)
+			}
+		})
+	}
+}
+
+func TestEnvironmentGetEmptyWrapper(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "applications/{family}/environments/{env}", http.StatusOK, map[string]any{"value": []any{}})
+	if _, err := srv.NewClient(t).Environments().Get(context.Background(), bc, "x"); !bcadmin.IsNotFound(err) {
+		t.Errorf("error = %v, want not found", err)
 	}
 }
 
