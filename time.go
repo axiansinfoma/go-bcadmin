@@ -31,7 +31,11 @@ func (t *Time) UnmarshalJSON(data []byte) error {
 	}
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("bcadmin: invalid timestamp %s: %w", data, err)
+		shown := string(data)
+		if len(shown) > 64 {
+			shown = shown[:64] + "..."
+		}
+		return fmt.Errorf("bcadmin: invalid timestamp %q", shown)
 	}
 	if s == "" {
 		t.Time = time.Time{}
@@ -42,6 +46,9 @@ func (t *Time) UnmarshalJSON(data []byte) error {
 			t.Time = v
 			return nil
 		}
+	}
+	if len(s) > 64 {
+		s = s[:64] + "..."
 	}
 	return fmt.Errorf("bcadmin: invalid timestamp %q", s)
 }

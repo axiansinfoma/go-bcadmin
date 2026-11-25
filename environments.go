@@ -7,6 +7,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -140,6 +141,21 @@ func (s *EnvironmentsService) Get(ctx context.Context, family, name string) (*En
 	env := raw.Environment
 	if len(raw.Value) > 0 {
 		env = raw.Value[0]
+		for _, v := range raw.Value {
+			if strings.EqualFold(v.Name, name) {
+				env = v
+				break
+			}
+		}
+	}
+	// Bound methods (Delete, ...) use the returned name and family, so they
+	// must be the requested ones.
+	if !strings.EqualFold(env.Name, name) || (env.ApplicationFamily != "" && !strings.EqualFold(env.ApplicationFamily, family)) {
+		return nil, fmt.Errorf("bcadmin: response for environment %s/%s describes environment %s/%s",
+			clean(family), clean(name), clean(env.ApplicationFamily), clean(env.Name))
+	}
+	if env.ApplicationFamily == "" {
+		env.ApplicationFamily = family
 	}
 	env.svc = nil
 	return s.bind(&env), nil
@@ -347,12 +363,18 @@ func (s *EnvironmentsService) powerPlatform(ctx context.Context, action, family,
 // startOperation sends a request that starts an environment operation and
 // returns the operation from the response.
 func (s *EnvironmentsService) startOperation(ctx context.Context, method, template string, segments []string, body any) (*Operation, error) {
+	// Before v2.9 these endpoints answer without an operation: the request
+	// would be accepted but could not be tracked, and a retry by the caller
+	// would start a second operation.
+	if !s.c.apiVersionAtLeast(2, 9) {
+		return nil, fmt.Errorf("bcadmin: %s %s needs API version v2.9 or later to return a trackable operation, client uses %s", method, template, s.c.apiVersion)
+	}
 	var op Operation
 	if err := s.c.call(ctx, method, template, segments, body, &op); err != nil {
 		return nil, err
 	}
 	if op.ID == "" {
-		return nil, fmt.Errorf("bcadmin: %s %s returned no operation; API version %s may be older than v2.9", method, template, s.c.apiVersion)
+		return nil, fmt.Errorf("bcadmin: %s %s was accepted but the response contains no operation to track; check the environment's operations before trying again", method, template)
 	}
 	return &op, nil
 }
@@ -372,8 +394,11 @@ func (s *EnvironmentsService) startEnvironmentOperation(ctx context.Context, met
 
 // operationFetcher returns a function that requests the current state of an
 // operation. With API v2.28 and later it uses GET environments/operations/{id},
-// which works across renames; before, it searches the operation lists of the
-// environments names, in order, skipping environments that no longer exist.
+// which works across renames. Before, it searches the operation lists of the
+// environments names, in order, skipping environments that no longer exist,
+// and then the operations of all environments (v2.7), which also covers
+// environments that were deleted. Environment operation lists exist since
+// API v2.6.
 func (s *EnvironmentsService) operationFetcher(family, name, id string, more ...string) func(context.Context) (*Operation, error) {
 	names := append([]string{name}, more...)
 	return func(ctx context.Context) (*Operation, error) {
@@ -385,6 +410,17 @@ func (s *EnvironmentsService) operationFetcher(family, name, id string, more ...
 			if IsNotFound(err) {
 				continue
 			}
+			if err != nil {
+				return nil, err
+			}
+			for i := range ops {
+				if ops[i].ID == id {
+					return &ops[i], nil
+				}
+			}
+		}
+		if s.c.apiVersionAtLeast(2, 7) {
+			ops, err := s.c.Tenant().Operations(ctx)
 			if err != nil {
 				return nil, err
 			}

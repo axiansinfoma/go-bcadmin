@@ -446,3 +446,82 @@ func TestEnvironmentCreateDocumentedResponse(t *testing.T) {
 		t.Errorf("operation = %+v", op)
 	}
 }
+
+func TestResultCacheHonorsUntilEnvironmentActive(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "applications/{family}/environments/{env}/recover", http.StatusAccepted, map[string]any{"id": "op-3", "status": "succeeded"})
+	var gets atomic.Int32
+	srv.Handle(http.MethodGet, "applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+		status := "Recovering"
+		if gets.Add(1) >= 3 {
+			status = "Active"
+		}
+		bcadmintest.WriteJSON(w, http.StatusOK, map[string]any{"name": "uat", "status": status})
+	})
+	p, err := srv.NewClient(t).Environments().Recover(context.Background(), bc, "uat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env, err := p.Result(context.Background()); err != nil || !env.Status.Is(bcadmin.EnvironmentStatusRecovering) {
+		t.Fatalf("Result() = %+v, %v", env, err)
+	}
+	env, err := p.Wait(context.Background(), &bcadmin.WaitOptions{UntilEnvironmentActive: true})
+	if err != nil || !env.Status.Is(bcadmin.EnvironmentStatusActive) {
+		t.Errorf("Wait(UntilEnvironmentActive) after Result() = %+v, %v", env, err)
+	}
+}
+
+func TestPollingBeforeV228FollowsRenameAndDeletedEnvironments(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.27"))
+	fake := srv.EnableEnvironments()
+	fake.Add(bcadmin.Environment{Name: "old", Type: bcadmin.EnvironmentTypeSandbox})
+	fake.SetPollsUntilDone(2)
+	c := srv.NewClient(t)
+	p, err := c.Environments().Rename(context.Background(), bc, "old", "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := p.Wait(context.Background(), nil)
+	if err != nil || env.Name != "new" {
+		t.Fatalf("rename = %+v, %v", env, err)
+	}
+
+	// An operation of an environment that no longer exists is found in the
+	// operations of all environments.
+	srv2 := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.27"))
+	srv2.HandleJSON(http.MethodDelete, "applications/{family}/environments/{env}", http.StatusAccepted, map[string]any{"id": "op-del", "status": "scheduled", "type": "delete"})
+	srv2.HandleJSON(http.MethodGet, "applications/{family}/environments/{env}/operations", http.StatusNotFound, map[string]any{"code": "environmentNotFound"})
+	srv2.HandleJSON(http.MethodGet, "environments/operations", http.StatusOK, map[string]any{"value": []map[string]any{{"id": "op-del", "status": "succeeded", "type": "delete"}}})
+	dp, err := srv2.NewClient(t).Environments().Delete(context.Background(), bc, "gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op, err := dp.Wait(context.Background(), nil); err != nil || !op.Status.Is(bcadmin.OperationStatusSucceeded) {
+		t.Errorf("delete = %+v, %v", op, err)
+	}
+}
+
+func TestOperationsNeedV29(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.8"))
+	c := srv.NewClient(t)
+	_, err := c.Environments().Create(context.Background(), bc, "uat", bcadmin.CreateEnvironmentOptions{Type: "Sandbox", CountryCode: "DE"})
+	if err == nil || !strings.Contains(err.Error(), "v2.9") {
+		t.Errorf("error = %v", err)
+	}
+	if n := len(srv.Requests()); n != 0 {
+		t.Errorf("requests = %d, want 0", n)
+	}
+}
+
+func TestEnvironmentGetRejectsOtherEnvironment(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "applications/{family}/environments/{env}", http.StatusOK, map[string]any{"name": "other", "applicationFamily": bc})
+	_, err := srv.NewClient(t).Environments().Get(context.Background(), bc, "uat")
+	if err == nil || !strings.Contains(err.Error(), "describes environment") {
+		t.Errorf("error = %v", err)
+	}
+}

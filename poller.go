@@ -24,7 +24,8 @@ type WaitOptions struct {
 	// environment (create, copy, recover, rename, restore), keep polling the
 	// environment after the operation succeeded until its status is Active.
 	// It fails when the environment reaches a failed status. Pollers of other
-	// operations ignore it.
+	// operations ignore it. The environment may stay in a non-final status
+	// for a long time, so give the context a deadline.
 	UntilEnvironmentActive bool
 }
 
@@ -37,9 +38,9 @@ type Poller[T any] struct {
 	fetch  func(ctx context.Context) (*Operation, error)
 	result func(ctx context.Context, op *Operation, opts *WaitOptions) (T, error)
 
-	resultDone bool
-	res        T
-	resErr     error
+	resultDone   bool
+	resultActive bool // the cached result was built with UntilEnvironmentActive
+	res          T
 }
 
 // newPoller returns a poller for op. fetch returns the current state of the
@@ -104,15 +105,16 @@ func (p *Poller[T]) resultWith(ctx context.Context, opts *WaitOptions) (T, error
 	if p.op.Status.Is(OperationStatusFailed) || p.op.Status.Is(OperationStatusCanceled) {
 		return zero, &OperationError{Operation: p.Operation()}
 	}
-	if p.resultDone {
-		return p.res, p.resErr
+	wantActive := opts != nil && opts.UntilEnvironmentActive
+	if p.resultDone && (p.resultActive || !wantActive) {
+		return p.res, nil
 	}
 	res, err := p.result(ctx, p.Operation(), opts)
 	if err != nil {
 		// Do not cache errors of the result request; it can be retried.
 		return zero, err
 	}
-	p.res, p.resErr, p.resultDone = res, nil, true
+	p.res, p.resultDone, p.resultActive = res, true, wantActive
 	return res, nil
 }
 

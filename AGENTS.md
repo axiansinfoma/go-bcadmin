@@ -107,8 +107,10 @@ make check    # tidy, lint, test, vuln
   the maximum delay; tests should use small positive delays.
 - Environment operations are polled with `GET environments/operations/{id}`
   (v2.28+), because rename and restore responses lack the environment and the
-  name changes. Older API versions search the operation list of the
-  environment in the request path.
+  name changes. Older API versions search the operation lists of the
+  environment in the request path and of the result environment, then the
+  operations of all environments (v2.7). Operation-starting environment
+  endpoints refuse API versions before v2.9, which return no operation.
 - `Get environment` is documented as wrapped in `{"value": [...]}`, but the
   service returns the object; `EnvironmentsService.Get` accepts both.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no

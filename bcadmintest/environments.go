@@ -27,11 +27,12 @@ type Environments struct {
 }
 
 type fakeOperation struct {
-	op     bcadmin.Operation
-	family string
-	name   string
-	polls  int
-	apply  func(e *Environments)
+	op       bcadmin.Operation
+	family   string
+	name     string
+	reserves string // environment key reserved until the operation ends
+	polls    int
+	apply    func(e *Environments)
 }
 
 // EnableEnvironments registers handlers for the environment, environment
@@ -88,7 +89,28 @@ func (e *Environments) Add(env bcadmin.Environment) {
 	e.put(env)
 }
 
+// cloneEnvironment returns a copy of env that shares no pointers with it.
+func cloneEnvironment(env bcadmin.Environment) bcadmin.Environment {
+	cloneTime := func(t *bcadmin.Time) *bcadmin.Time {
+		if t == nil {
+			return nil
+		}
+		c := *t
+		return &c
+	}
+	env.SoftDeletedOn = cloneTime(env.SoftDeletedOn)
+	env.HardDeletePendingOn = cloneTime(env.HardDeletePendingOn)
+	if env.VersionDetails != nil {
+		vd := *env.VersionDetails
+		vd.GracePeriodStartDate = cloneTime(vd.GracePeriodStartDate)
+		vd.EnforcedUpdatePeriodStartDate = cloneTime(vd.EnforcedUpdatePeriodStartDate)
+		env.VersionDetails = &vd
+	}
+	return env
+}
+
 func (e *Environments) put(env bcadmin.Environment) {
+	env = cloneEnvironment(env)
 	if env.ApplicationFamily == "" {
 		env.ApplicationFamily = bcadmin.FamilyBusinessCentral
 	}
@@ -109,7 +131,7 @@ func (e *Environments) Get(family, name string) (bcadmin.Environment, bool) {
 	if !ok {
 		return bcadmin.Environment{}, false
 	}
-	return *env, true
+	return cloneEnvironment(*env), true
 }
 
 // Operations returns copies of all operations started through the API.
@@ -140,7 +162,27 @@ func (e *Environments) lookup(w http.ResponseWriter, r *http.Request) (*bcadmin.
 
 // start records a new operation and writes it with status 202. e.mu must be
 // held.
-func (e *Environments) start(w http.ResponseWriter, typ bcadmin.OperationType, family, name string, envType bcadmin.EnvironmentType, params map[string]any, apply func(*Environments)) {
+// taken reports whether an environment named name exists or is reserved by
+// a pending operation. e.mu must be held.
+func (e *Environments) taken(family, name string) bool {
+	key := envKey(family, name)
+	if _, ok := e.envs[key]; ok {
+		return true
+	}
+	for _, o := range e.ops {
+		if o.reserves == key && !o.op.Status.Terminal() {
+			return true
+		}
+	}
+	return false
+}
+
+// conflict writes the error for a name that is taken. e.mu must be held.
+func conflict(w http.ResponseWriter, name string) {
+	WriteError(w, http.StatusConflict, "resourceExists", fmt.Sprintf("An environment named '%s' already exists.", name))
+}
+
+func (e *Environments) start(w http.ResponseWriter, typ bcadmin.OperationType, family, name string, envType bcadmin.EnvironmentType, reserve string, params map[string]any, apply func(*Environments)) {
 	e.nextID++
 	op := bcadmin.Operation{
 		ID:              fmt.Sprintf("00000000-0000-0000-0001-%012d", e.nextID),
@@ -153,6 +195,9 @@ func (e *Environments) start(w http.ResponseWriter, typ bcadmin.OperationType, f
 		ProductFamily:   family,
 	}
 	fo := &fakeOperation{op: op, family: family, name: name, apply: apply}
+	if reserve != "" {
+		fo.reserves = envKey(family, reserve)
+	}
 	if e.failMsg != "" {
 		fo.op.ErrorMessage, e.failMsg = e.failMsg, ""
 		fo.apply = nil
@@ -231,15 +276,15 @@ func (e *Environments) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, exists := e.envs[envKey(family, name)]; exists {
-		WriteError(w, http.StatusConflict, "resourceExists", fmt.Sprintf("An environment named '%s' already exists.", name))
+	if e.taken(family, name) {
+		conflict(w, name)
 		return
 	}
 	newEnv := bcadmin.Environment{
 		Name: name, ApplicationFamily: family, Type: body.EnvironmentType, CountryCode: body.CountryCode,
 		RingName: body.RingName, VersionDetails: &bcadmin.VersionDetails{Version: body.ApplicationVersion},
 	}
-	e.start(w, bcadmin.OperationTypeCreate, family, name, body.EnvironmentType,
+	e.start(w, bcadmin.OperationTypeCreate, family, name, body.EnvironmentType, name,
 		map[string]any{"destinationEnvironmentName": name, "destinationEnvironmentType": string(body.EnvironmentType), "countryCode": body.CountryCode},
 		func(e *Environments) { e.put(newEnv) })
 }
@@ -252,7 +297,7 @@ func (e *Environments) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	family, name, typ := env.ApplicationFamily, env.Name, env.Type
-	e.start(w, bcadmin.OperationTypeSoftDelete, family, name, typ, map[string]any{"deleteReason": "requestedByAdmin"},
+	e.start(w, bcadmin.OperationTypeSoftDelete, family, name, typ, "", map[string]any{"deleteReason": "requestedByAdmin"},
 		func(e *Environments) {
 			if stored, ok := e.envs[envKey(family, name)]; ok {
 				stored.Status = bcadmin.EnvironmentStatusSoftDeleted
@@ -277,13 +322,14 @@ func (e *Environments) handleCopy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, exists := e.envs[envKey(src.ApplicationFamily, body.EnvironmentName)]; exists {
-		WriteError(w, http.StatusConflict, "resourceExists", fmt.Sprintf("An environment named '%s' already exists.", body.EnvironmentName))
+	if e.taken(src.ApplicationFamily, body.EnvironmentName) {
+		conflict(w, body.EnvironmentName)
 		return
 	}
 	copied := *src
 	copied.Name, copied.FriendlyName, copied.Type = body.EnvironmentName, body.EnvironmentName, body.Type
-	e.start(w, bcadmin.OperationTypeCopy, src.ApplicationFamily, src.Name, src.Type,
+	// Like the service, report the operation for the destination.
+	e.start(w, bcadmin.OperationTypeCopy, src.ApplicationFamily, body.EnvironmentName, body.Type, body.EnvironmentName,
 		map[string]any{"sourceEnvironmentName": src.Name, "destinationEnvironmentName": body.EnvironmentName, "destinationEnvironmentType": string(body.Type)},
 		func(e *Environments) { e.put(copied) })
 }
@@ -300,7 +346,7 @@ func (e *Environments) handleRecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	family, name := env.ApplicationFamily, env.Name
-	e.start(w, bcadmin.OperationTypeRecover, family, name, env.Type, map[string]any{"recoveryReason": "requestedByAdmin"},
+	e.start(w, bcadmin.OperationTypeRecover, family, name, env.Type, "", map[string]any{"recoveryReason": "requestedByAdmin"},
 		func(e *Environments) {
 			if stored, ok := e.envs[envKey(family, name)]; ok {
 				stored.Status = bcadmin.EnvironmentStatusActive
@@ -323,7 +369,11 @@ func (e *Environments) handleRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	family, oldName, newName := env.ApplicationFamily, env.Name, body.NewEnvironmentName
-	e.start(w, bcadmin.OperationTypeEnvironmentRename, family, oldName, env.Type,
+	if e.taken(family, newName) {
+		conflict(w, newName)
+		return
+	}
+	e.start(w, bcadmin.OperationTypeEnvironmentRename, family, oldName, env.Type, newName,
 		map[string]any{"oldEnvironmentName": oldName, "newEnvironmentName": newName},
 		func(e *Environments) {
 			if stored, ok := e.envs[envKey(family, oldName)]; ok {
@@ -350,9 +400,13 @@ func (e *Environments) handleRestore(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if e.taken(src.ApplicationFamily, body.EnvironmentName) {
+		conflict(w, body.EnvironmentName)
+		return
+	}
 	restored := *src
 	restored.Name, restored.FriendlyName, restored.Type = body.EnvironmentName, body.EnvironmentName, body.EnvironmentType
-	e.start(w, bcadmin.OperationTypePitRestore, src.ApplicationFamily, src.Name, src.Type,
+	e.start(w, bcadmin.OperationTypePitRestore, src.ApplicationFamily, body.EnvironmentName, body.EnvironmentType, body.EnvironmentName,
 		map[string]any{"environmentName": body.EnvironmentName, "environmentType": string(body.EnvironmentType), "restorePointInTime": body.PointInTime},
 		func(e *Environments) { e.put(restored) })
 }
@@ -382,6 +436,9 @@ func (e *Environments) handleUsedStorage(w http.ResponseWriter, r *http.Request)
 func (e *Environments) handleEnvOperations(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if _, ok := e.lookup(w, r); !ok {
+		return
+	}
 	family, name := r.PathValue("family"), r.PathValue("env")
 	out := []bcadmin.Operation{}
 	for _, o := range e.ops {
@@ -448,7 +505,7 @@ func (e *Environments) handleMatch(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "productionConfigurationNotEligible", "The environment isn't an active sandbox.")
 		return
 	}
-	e.start(w, bcadmin.OperationTypeMoveToProductionDBConfig, env.ApplicationFamily, env.Name, env.Type, nil, nil)
+	e.start(w, bcadmin.OperationTypeMoveToProductionDBConfig, env.ApplicationFamily, env.Name, env.Type, "", nil, nil)
 }
 
 func (e *Environments) handleLink(w http.ResponseWriter, r *http.Request) {

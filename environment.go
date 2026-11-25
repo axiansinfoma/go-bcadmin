@@ -42,7 +42,9 @@ func (s EnvironmentStatus) Failed() bool {
 // [EnvironmentsService.List] are bound to the client that returned them, so
 // their methods (Refresh, Copy, Delete, ...) can be called directly. An
 // Environment built by hand is not bound; use the methods of
-// [EnvironmentsService] for it.
+// [EnvironmentsService] for it. The binding is an unexported field, so compare
+// environments field by field (or with cmpopts.IgnoreUnexported) rather than
+// with == or reflect.DeepEqual.
 type Environment struct {
 	// FriendlyName is the display name.
 	FriendlyName string `json:"friendlyName,omitempty"`

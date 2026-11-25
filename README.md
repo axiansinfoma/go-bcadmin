@@ -108,7 +108,8 @@ deletePoller, err := env.Delete(ctx)
 
 `Create` and `Delete` are not retried on server errors, because the operation
 may already have started; check the environment or its operations before trying
-again.
+again. The methods that start environment operations need API version v2.9 or
+later, which return the operation to track.
 
 ## Long-running operations
 

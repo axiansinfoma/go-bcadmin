@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/axiansinfoma/go-bcadmin"
 	"github.com/axiansinfoma/go-bcadmin/bcadmintest"
@@ -67,5 +68,42 @@ func TestEnvironmentsFake(t *testing.T) {
 	}
 	if _, err := c.Environments().GetOperation(ctx, bcadmin.FamilyBusinessCentral, "sb", p.ID()); !bcadmin.IsNotFound(err) {
 		t.Errorf("operation of another environment: %v", err)
+	}
+}
+
+func TestEnvironmentsFakeConflictsAndCopies(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	fake := srv.EnableEnvironments()
+	fake.Add(bcadmin.Environment{Name: "a", Type: bcadmin.EnvironmentTypeSandbox, VersionDetails: &bcadmin.VersionDetails{Version: "27.0"}})
+	fake.Add(bcadmin.Environment{Name: "b", Type: bcadmin.EnvironmentTypeProduction})
+	fake.SetPollsUntilDone(5)
+	c := srv.NewClient(t)
+	ctx := context.Background()
+	envs := c.Environments()
+	fam := bcadmin.FamilyBusinessCentral
+
+	if _, err := envs.Rename(ctx, fam, "a", "b"); !bcadmin.IsConflict(err) {
+		t.Errorf("rename onto existing: %v", err)
+	}
+	if _, err := envs.Restore(ctx, fam, "a", bcadmin.RestoreOptions{EnvironmentName: "b", EnvironmentType: "Sandbox", PointInTime: time.Now()}); !bcadmin.IsConflict(err) {
+		t.Errorf("restore onto existing: %v", err)
+	}
+	opts := bcadmin.CreateEnvironmentOptions{Type: "Sandbox", CountryCode: "DE"}
+	if _, err := envs.Create(ctx, fam, "c", opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := envs.Create(ctx, fam, "c", opts); !bcadmin.IsConflict(err) {
+		t.Errorf("second create while the first is pending: %v", err)
+	}
+	if _, err := c.Environments().Operations(ctx, fam, "missing"); !bcadmin.IsNotFound(err) {
+		t.Errorf("operations of a missing environment: %v", err)
+	}
+
+	got, _ := fake.Get(fam, "a")
+	got.VersionDetails.Version = "changed"
+	again, _ := fake.Get(fam, "a")
+	if again.VersionDetails.Version != "27.0" {
+		t.Error("Get does not return a deep copy")
 	}
 }
