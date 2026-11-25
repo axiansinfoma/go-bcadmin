@@ -1,0 +1,15 @@
+{
+  "code": "EntityValidationFailed",
+  "message": "The app cannot be installed because of missing dependencies.",
+  "data": {
+    "requirements": [
+      {
+        "appId": "00000000-0000-0000-0000-000000000002",
+        "name": "Contoso Base",
+        "publisher": "Contoso",
+        "version": "1.2.3.4",
+        "type": "Install"
+      }
+    ]
+  }
+}

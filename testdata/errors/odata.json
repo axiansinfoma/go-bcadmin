@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "Forbidden",
+    "message": "The application is not authorized to access this tenant.",
+    "innererror": {
+      "code": "AppNotAuthorized"
+    }
+  }
+}

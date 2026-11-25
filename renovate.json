@@ -1,0 +1,51 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommitTypeAll(chore)"
+  ],
+  "baseBranchPatterns": ["main"],
+  "labels": ["dependencies"],
+  "ignoreUnstable": true,
+  "commitMessagePrefix": "chore(renovate): ",
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
+  "packageRules": [
+    {
+      "description": "The go directive is the oldest supported Go release and is raised by hand.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "enabled": false
+    },
+    {
+      "description": "Only stable releases of Go modules.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect"],
+      "allowedVersions": "/^v\\d+\\.\\d+\\.\\d+$/"
+    },
+    {
+      "description": "Group non-major Go module updates.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "go modules (non-major)",
+      "labels": ["dependencies", "go"]
+    },
+    {
+      "description": "Group non-major GitHub Actions updates.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "groupName": "github actions (non-major)",
+      "labels": ["dependencies", "github-actions"]
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Tool versions in workflows, marked with '# renovate: datasource=... depName=...'.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/", "/^Makefile$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+extractVersion=(?<extractVersion>\\S+))?\\s*\\n[^\\n]*?[:=]\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
+      ]
+    }
+  ]
+}

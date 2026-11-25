@@ -1,0 +1,16 @@
+{
+  "value": [
+    {
+      "environmentType": "Production",
+      "environmentName": "Production",
+      "applicationFamily": "BusinessCentral",
+      "databaseStorageInKilobytes": 524288
+    },
+    {
+      "environmentType": "Sandbox",
+      "environmentName": "mysandbox",
+      "applicationFamily": "BusinessCentral",
+      "databaseStorageInKilobytes": 3221225472
+    }
+  ]
+}

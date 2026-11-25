@@ -1,0 +1,12 @@
+{
+  "environmentsCount": {
+    "production": 1,
+    "sandbox": 3
+  },
+  "storageInKilobytes": {
+    "default": 83886080,
+    "userLicenses": 4194304,
+    "additionalCapacity": 0,
+    "total": 88080384
+  }
+}
