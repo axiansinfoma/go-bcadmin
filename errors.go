@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Sentinel errors for use with [errors.Is]. A [*ResponseError] matches them
@@ -42,10 +43,12 @@ const maxErrorBodyInMessage = 2048
 // ErrorDetail is one entry of the nested error lists of an error response
 // ("clientError", "details").
 type ErrorDetail struct {
-	Code    string        `json:"code,omitempty"`
-	Message string        `json:"message,omitempty"`
-	Target  string        `json:"target,omitempty"`
-	Details []ErrorDetail `json:"details,omitempty"`
+	Code          string         `json:"code,omitempty"`
+	Message       string         `json:"message,omitempty"`
+	Target        string         `json:"target,omitempty"`
+	ClientErrors  []ErrorDetail  `json:"clientError,omitempty"`
+	Details       []ErrorDetail  `json:"details,omitempty"`
+	ExtensionData map[string]any `json:"extensionData,omitempty"`
 }
 
 // ErrorData holds the "data" object of an error response. App management
@@ -199,20 +202,52 @@ func jsonString(raw json.RawMessage) string {
 	return stringify(v)
 }
 
+// maxDetailDepth limits the nesting of error details that are decoded.
+const maxDetailDepth = 8
+
 // jsonDetails decodes a list of error details, or a single detail object.
+// Each entry and each of its fields is decoded on its own, so an entry with
+// an unexpected field type keeps its other fields and does not drop the
+// other entries.
 func jsonDetails(raw json.RawMessage) []ErrorDetail {
-	if len(raw) == 0 {
+	return jsonDetailsDepth(raw, 0)
+}
+
+func jsonDetailsDepth(raw json.RawMessage, depth int) []ErrorDetail {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || depth >= maxDetailDepth {
 		return nil
 	}
-	var list []ErrorDetail
-	if json.Unmarshal(raw, &list) == nil {
-		return list
+	var entries []json.RawMessage
+	if raw[0] == '[' {
+		if json.Unmarshal(raw, &entries) != nil {
+			return nil
+		}
+	} else {
+		entries = []json.RawMessage{raw}
 	}
-	var one ErrorDetail
-	if json.Unmarshal(raw, &one) == nil && (one.Code != "" || one.Message != "") {
-		return []ErrorDetail{one}
+	var out []ErrorDetail
+	for _, entry := range entries {
+		fields := jsonObject(entry)
+		if fields == nil {
+			if s := jsonString(entry); s != "" {
+				out = append(out, ErrorDetail{Message: s})
+			}
+			continue
+		}
+		d := ErrorDetail{
+			Code:          jsonString(fields["code"]),
+			Message:       jsonString(fields["message"]),
+			Target:        jsonString(fields["target"]),
+			ClientErrors:  jsonDetailsDepth(fields["clienterror"], depth+1),
+			Details:       jsonDetailsDepth(fields["details"], depth+1),
+			ExtensionData: jsonMap(fields["extensiondata"]),
+		}
+		if d.Code != "" || d.Message != "" || d.Target != "" || len(d.ClientErrors) > 0 || len(d.Details) > 0 || len(d.ExtensionData) > 0 {
+			out = append(out, d)
+		}
 	}
-	return nil
+	return out
 }
 
 // jsonMap decodes an object; any other non-null value is returned as
@@ -286,7 +321,11 @@ func (e *ResponseError) Error() string {
 	case len(bytes.TrimSpace(e.RawBody)) > 0:
 		raw := clean(string(bytes.TrimSpace(e.RawBody)))
 		if len(raw) > maxErrorBodyInMessage {
-			raw = raw[:maxErrorBodyInMessage] + "... (truncated, see RawBody)"
+			cut := maxErrorBodyInMessage
+			for cut > 0 && !utf8.RuneStart(raw[cut]) {
+				cut--
+			}
+			raw = raw[:cut] + "... (truncated, see RawBody)"
 		}
 		b.WriteString(": ")
 		b.WriteString(raw)
@@ -316,6 +355,14 @@ func writeDetails(b *strings.Builder, label string, details []ErrorDetail) {
 		}
 		if d.Target != "" {
 			fmt.Fprintf(b, " (target: %s)", clean(d.Target))
+		}
+		if len(d.ClientErrors) > 0 || len(d.Details) > 0 {
+			b.WriteString(" [")
+			var nested strings.Builder
+			writeDetails(&nested, "client errors", d.ClientErrors)
+			writeDetails(&nested, "details", d.Details)
+			b.WriteString(strings.TrimPrefix(nested.String(), "; "))
+			b.WriteString("]")
 		}
 	}
 }

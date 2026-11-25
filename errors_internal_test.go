@@ -4,7 +4,17 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestErrorTruncatesAtRuneBoundary(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("a", maxErrorBodyInMessage-1) + "ä" + strings.Repeat("b", 10)
+	e := newResponseError(&http.Response{StatusCode: http.StatusBadGateway, Status: "502 Bad Gateway", Header: http.Header{}}, []byte(body))
+	if !utf8.ValidString(e.Error()) || !strings.Contains(e.Error(), "(truncated, see RawBody)") {
+		t.Errorf("Error() is not valid UTF-8 or not truncated")
+	}
+}
 
 func FuzzResponseErrorDecode(f *testing.F) {
 	for _, s := range []string{
@@ -30,6 +40,9 @@ func FuzzResponseErrorDecode(f *testing.F) {
 		}
 		if e.Message != "" && !strings.Contains(msg, clean(e.Message)) {
 			t.Fatalf("Error() = %q does not contain message %q", msg, e.Message)
+		}
+		if !utf8.ValidString(body) {
+			return
 		}
 		for _, r := range msg {
 			if r < 0x20 || r == 0x7f {

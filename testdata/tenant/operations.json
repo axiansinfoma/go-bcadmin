@@ -22,12 +22,18 @@
     },
     {
       "id": "00000000-0000-0000-0000-000000000011",
-      "type": "EnvironmentAppInstall",
+      "type": "environmentAppInstall",
       "status": "Running",
+      "aadTenantId": "00000000-0000-0000-0000-000000000001",
       "createdOn": "2026-05-05T08:00:00.000Z",
-      "appId": "00000000-0000-0000-0000-000000000002",
-      "sourceAppVersion": "",
-      "targetAppVersion": "2.0.0.0",
+      "errorMessage": "",
+      "parameters": {
+        "appId": "00000000-0000-0000-0000-000000000002",
+        "targetAppVersion": "2.0.0.0",
+        "countryCode": "US",
+        "allowPreviewVersion": false,
+        "acceptIsvEula": true
+      },
       "environmentName": "mysandbox",
       "environmentType": "Sandbox",
       "productFamily": "BusinessCentral"

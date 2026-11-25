@@ -124,6 +124,20 @@ func TestResponseErrorPassThrough(t *testing.T) {
 			wantInError: []string{"X: Y (target: t)", "client errors: a: b"},
 		},
 		{
+			name:        "nested client errors and a bad entry",
+			body:        `{"code":"invalidInput","message":"Invalid input.","clientError":[{"code":1,"message":"numeric code","extensionData":{"field":"name"}},{"code":"outer","message":"outer msg","clientError":[{"code":"inner","message":"inner msg"}]}]}`,
+			status:      http.StatusBadRequest,
+			wantCode:    "invalidInput",
+			wantMessage: "Invalid input.",
+			wantInError: []string{"client errors: 1: numeric code, outer: outer msg [client errors: inner: inner msg]"},
+			check: func(t *testing.T, re *bcadmin.ResponseError) {
+				if len(re.ClientErrors) != 2 || re.ClientErrors[0].ExtensionData["field"] != "name" ||
+					len(re.ClientErrors[1].ClientErrors) != 1 || re.ClientErrors[1].ClientErrors[0].Code != "inner" {
+					t.Errorf("ClientErrors = %+v", re.ClientErrors)
+				}
+			},
+		},
+		{
 			name:        "wrapped with only innererror",
 			body:        `{"error":{"innererror":{"code":"Deep"}}}`,
 			status:      http.StatusBadRequest,

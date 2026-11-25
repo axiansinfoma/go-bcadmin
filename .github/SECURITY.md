@@ -77,9 +77,12 @@ no backports.
 - **Bounded responses.** Response bodies larger than `MaxResponseBytes`
   (default 64 MiB) are rejected.
 - **Caller-supplied path segments cannot change the path.** Each segment is
-  validated (no `/`, `\`, `.`, `..` or control characters) and escaped.
-- **Non-idempotent requests are not repeated.** POST, PATCH and creating PUT
-  requests are
+  validated (it must not be empty, equal to `.` or `..`, or contain `/`, `\` or
+  control characters) and escaped. `Client.Do` takes a caller-built relative
+  path and query; it rejects absolute URLs and `.`/`..` segments, but escaping
+  the values in it is the caller's responsibility.
+- **Non-idempotent requests are not repeated.** POST, PATCH, creating PUT
+  requests and every non-GET request sent with `Client.Do` are
   only retried when the service rejected them before processing (429, or 503
   with `Retry-After`) or the connection could not be established, unless
   `RetryNonIdempotent` is set.

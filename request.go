@@ -24,12 +24,24 @@ import (
 //
 // path is relative to the versioned API root (see [Client.Endpoint]), for
 // example "environments/quotas", and may contain a query string. Escape
-// caller-supplied segments with [url.PathEscape]. body, if not nil, is sent
-// as JSON. out, if not nil, receives the JSON response body. A response with a
-// status code of 400 or above is returned as a [*ResponseError].
+// caller-supplied segments with [url.PathEscape]. body, if not nil, is
+// encoded with encoding/json and sent as JSON; pass a json.RawMessage to send
+// JSON you encoded yourself (a []byte would be encoded as a base64 string).
+// out, if not nil, receives the JSON response body. A response with a
+// status code of 300 or above is returned as a [*ResponseError].
+//
+// Because Do cannot know whether a request starts an operation, only GET,
+// HEAD and OPTIONS requests are retried on server errors; all other methods
+// follow the rules for non-idempotent requests (see
+// ClientOptions.RetryNonIdempotent).
 func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
 	if err := pathutil.ValidateRelative(path); err != nil {
 		return fmt.Errorf("bcadmin: %w", err)
+	}
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	default:
+		ctx = withNonIdempotent(ctx)
 	}
 	u, err := c.resolve(path)
 	if err != nil {
@@ -292,7 +304,11 @@ func (c *Client) nextLink(link string) (string, error) {
 	if link == "" {
 		return "", nil
 	}
-	u, err := c.baseURL.Parse(link)
+	// Resolve relative links below the versioned API root, not next to it.
+	root := *c.baseURL
+	root.Path = strings.TrimRight(root.Path, "/") + "/"
+	root.RawPath = ""
+	u, err := root.Parse(link)
 	if err != nil {
 		return "", fmt.Errorf("bcadmin: invalid @odata.nextLink %q: %w", link, err)
 	}

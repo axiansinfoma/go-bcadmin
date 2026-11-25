@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 )
@@ -23,7 +24,21 @@ var ErrResponseTooLarge = errors.New("bcadmin: response body too large")
 // is nil. It requires TLS 1.2 and follows redirects only to the same scheme and
 // host, so the bearer token is never forwarded to another origin.
 func newDefaultHTTPClient() *http.Client {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	var tr *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = dt.Clone()
+	} else {
+		// The application replaced http.DefaultTransport; start from the
+		// standard settings instead of using its transport.
+		tr = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: time.Second,
+		}
+	}
 	tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	return &http.Client{Transport: tr, CheckRedirect: sameOriginRedirect}
 }
@@ -64,14 +79,19 @@ type limitedBody struct {
 	r    io.Reader
 	max  int64
 	read int64
+	err  error
 }
 
 // Read reads from the body and fails once the limit is exceeded.
 func (b *limitedBody) Read(p []byte) (int, error) {
+	if b.err != nil {
+		return 0, b.err
+	}
 	n, err := b.r.Read(p)
 	b.read += int64(n)
 	if b.read > b.max {
-		return n - int(b.read-b.max), &tooLargeError{max: b.max}
+		b.err = &tooLargeError{max: b.max}
+		return n - int(b.read-b.max), b.err
 	}
 	return n, err
 }

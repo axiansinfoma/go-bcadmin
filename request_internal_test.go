@@ -125,6 +125,19 @@ func TestRedirects(t *testing.T) {
 	}
 }
 
+func TestLimitedBodyAfterError(t *testing.T) {
+	t.Parallel()
+	b := &limitedBody{rc: io.NopCloser(strings.NewReader("0123456789")), max: 4}
+	b.r = io.LimitReader(b.rc, b.max+1)
+	buf := make([]byte, 10)
+	if n, err := b.Read(buf); n != 4 || !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("first Read = %d, %v", n, err)
+	}
+	if n, err := b.Read(buf); n != 0 || !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("second Read = %d, %v", n, err)
+	}
+}
+
 func TestSameOriginRedirectLimit(t *testing.T) {
 	t.Parallel()
 	req := httptest.NewRequest(http.MethodGet, "https://a.example.com/x", nil)

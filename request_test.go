@@ -55,6 +55,18 @@ func TestDo(t *testing.T) {
 		}
 	}
 
+	// PUT through Do is not retried on 500: Do cannot know whether it creates
+	// something.
+	srv.Fail(bcadmintest.Fault{Method: http.MethodPut, Path: "put/x", Status: http.StatusInternalServerError, Times: 1})
+	srv.HandleJSON(http.MethodPut, "put/x", http.StatusOK, map[string]any{})
+	before := len(srv.Requests())
+	if err := c.Do(ctx, http.MethodPut, "put/x", map[string]string{}, nil); err == nil {
+		t.Error("PUT through Do was retried after 500")
+	}
+	if n := len(srv.Requests()) - before; n != 1 {
+		t.Errorf("PUT attempts = %d, want 1", n)
+	}
+
 	// Unregistered path: the server's 404 body is passed through.
 	err := c.Do(ctx, http.MethodGet, "nothing/here", nil, nil)
 	if !bcadmin.IsNotFound(err) || !strings.Contains(err.Error(), "no handler for GET") {
@@ -204,7 +216,7 @@ func TestPagination(t *testing.T) {
 		case "2":
 			bcadmintest.WriteJSON(w, http.StatusOK, map[string]any{
 				"value":           []map[string]string{{"id": "3"}},
-				"@odata.nextLink": "/admin/v2.29/environments/operations?page=3",
+				"@odata.nextLink": "environments/operations?page=3",
 			})
 		default:
 			bcadmintest.WriteJSON(w, http.StatusOK, map[string]any{"value": []map[string]string{{"id": "4"}}})

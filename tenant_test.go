@@ -74,7 +74,9 @@ func TestTenantOperations(t *testing.T) {
 		op.Parameters["destinationEnvironmentName"] != "mysandbox" || op.ProductFamily != bcadmin.FamilyBusinessCentral {
 		t.Errorf("operation = %+v", op)
 	}
-	if ops[1].AppID == "" || ops[1].TargetAppVersion != "2.0.0.0" {
+	// Environment operation lists carry app details in parameters.
+	if !ops[1].Type.Is(bcadmin.OperationTypeEnvironmentAppInstall) || ops[1].Parameters["appId"] != "00000000-0000-0000-0000-000000000002" ||
+		ops[1].Parameters["targetAppVersion"] != "2.0.0.0" || ops[1].AppID != "" {
 		t.Errorf("app operation = %+v", ops[1])
 	}
 

@@ -112,8 +112,8 @@ func (p *Poller[T]) resultWith(ctx context.Context, opts *WaitOptions) (T, error
 //
 // It returns an [*OperationError] when the operation failed or was canceled,
 // [ErrOperationScheduled] when opts.TreatScheduledAsDone is set and the
-// operation is scheduled, and an error wrapping ctx.Err() when ctx is done
-// first. In the last case the operation keeps running in Business Central;
+// operation is scheduled, and an error wrapping ctx.Err() (and the context's
+// cause, if one was set) when ctx is done first. In the last case the operation keeps running in Business Central;
 // it can be resumed later with its ID.
 func (p *Poller[T]) Wait(ctx context.Context, opts *WaitOptions) (T, error) {
 	var zero T
@@ -125,7 +125,7 @@ func (p *Poller[T]) Wait(ctx context.Context, opts *WaitOptions) (T, error) {
 
 	// A resumed poller does not know the status yet; poll right away.
 	if p.op.Status == "" {
-		if _, err := p.Poll(ctx); err != nil {
+		if err := p.pollOnce(ctx); err != nil {
 			return zero, err
 		}
 	}
@@ -141,14 +141,30 @@ func (p *Poller[T]) Wait(ctx context.Context, opts *WaitOptions) (T, error) {
 		timer.Reset(freq)
 		select {
 		case <-ctx.Done():
-			return zero, fmt.Errorf("bcadmin: waiting for operation %s: %w", p.op.ID, context.Cause(ctx))
+			return zero, p.ctxError(ctx)
 		case <-timer.C:
 		}
-		if _, err := p.Poll(ctx); err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
-				return zero, fmt.Errorf("bcadmin: waiting for operation %s: %w", p.op.ID, context.Cause(ctx))
-			}
+		if err := p.pollOnce(ctx); err != nil {
 			return zero, err
 		}
 	}
+}
+
+// pollOnce polls and maps an error caused by ctx to the error of ctxError.
+func (p *Poller[T]) pollOnce(ctx context.Context) error {
+	_, err := p.Poll(ctx)
+	if err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return p.ctxError(ctx)
+	}
+	return err
+}
+
+// ctxError returns the error for a done ctx. It wraps ctx.Err() and, when it
+// differs, the context's cause.
+func (p *Poller[T]) ctxError(ctx context.Context) error {
+	err, cause := ctx.Err(), context.Cause(ctx)
+	if cause != nil && !errors.Is(cause, err) {
+		return fmt.Errorf("bcadmin: waiting for operation %s: %w (cause: %w)", p.op.ID, err, cause)
+	}
+	return fmt.Errorf("bcadmin: waiting for operation %s: %w", p.op.ID, err)
 }

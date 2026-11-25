@@ -116,19 +116,40 @@ func TestPollerScheduled(t *testing.T) {
 func TestPollerContext(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t)
-	serveOperation(srv, "op-4", "Running")
+	calls := serveOperation(srv, "op-4", "Running")
 	p, err := srv.NewClient(t).Tenant().ResumeOperation("op-4")
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	_, err = p.Wait(ctx, nil)
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "op-4") {
-		t.Errorf("Wait() error = %v, want DeadlineExceeded", err)
+	// Cancel with a cause once the operation was polled twice, independent of
+	// how long a request takes on the test machine.
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	stop := errors.New("test stop")
+	go func() {
+		for calls.Load() < 2 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel(stop)
+	}()
+	_, err = p.Wait(ctx, &bcadmin.WaitOptions{Frequency: time.Millisecond})
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, stop) || !strings.Contains(err.Error(), "op-4") {
+		t.Errorf("Wait() error = %v, want context.Canceled and the cause", err)
 	}
 	if p.Done() || !p.Operation().Status.Is(bcadmin.OperationStatusRunning) {
 		t.Errorf("poller state = %+v", p.Operation())
+	}
+
+	// A context that is already done fails the first poll of a resumed poller
+	// with the same error.
+	p2, err := srv.NewClient(t).Tenant().ResumeOperation("op-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, cancel2 := context.WithTimeout(context.Background(), -time.Second)
+	defer cancel2()
+	if _, err := p2.Wait(done, nil); !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "waiting for operation op-4") {
+		t.Errorf("Wait() error = %v, want DeadlineExceeded", err)
 	}
 }
 

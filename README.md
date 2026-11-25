@@ -162,7 +162,9 @@ client, err := bcadmin.NewClient(cred, &bcadmin.ClientOptions{
 customer, err := client.ForTenant("<tenant-id>")
 ```
 
-`client.Do` calls endpoints this module does not wrap yet.
+`client.Do` calls endpoints this module does not wrap yet. It retries only GET,
+HEAD and OPTIONS requests on server errors; other methods get the rules for
+POST.
 
 ## Testing your code
 

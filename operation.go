@@ -110,6 +110,11 @@ type Operation struct {
 	// ProductFamily is the application family, for example "BusinessCentral".
 	ProductFamily string `json:"productFamily,omitempty"`
 
+	// The following fields are returned by the app management operation
+	// endpoints (apps/{appId}/operations). The environment operation lists
+	// return the same information in Parameters ("appId",
+	// "targetAppVersion", ...).
+
 	// AppID is the app of an app operation.
 	AppID string `json:"appId,omitempty"`
 	// SourceAppVersion is the app version before an app operation.
