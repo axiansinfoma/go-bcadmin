@@ -195,10 +195,15 @@ func TestBodyClose(t *testing.T) {
 		_ = b.Close()
 		close(closed)
 	}()
+	// Wait until Close is waiting for the write lock: then TryRLock fails.
+	for b.mu.TryRLock() {
+		b.mu.RUnlock()
+		time.Sleep(time.Millisecond)
+	}
 	select {
 	case <-closed:
 		t.Fatal("Close returned while a file read was in progress")
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 	close(f.release)
 	<-closed
