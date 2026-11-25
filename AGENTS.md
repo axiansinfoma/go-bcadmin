@@ -9,6 +9,7 @@ Business Central Administration Center API. Read README.md for the user view.
 | --- | --- |
 | `doc.go` | Package documentation. |
 | `client.go` | `Client`, `NewClient`, `ClientOptions`, `ForTenant`. Builds the azcore pipeline (bearer token, retry, telemetry). |
+| `transport.go` | Default HTTP client (TLS 1.2, same-origin redirects) and the response size limit. |
 | `request.go` | `Do`, path building, request sending, error mapping, retry rules for POST/PATCH, `@odata.nextLink` pagination (`list`, `listAll`). |
 | `errors.go` | `ResponseError` (API error body pass-through), sentinels, `OperationError`. |
 | `operation.go`, `poller.go` | `Operation`, statuses and types; generic `Poller[T]`. |
@@ -77,7 +78,17 @@ make check    # tidy, lint, test, vuln
 ## Pitfalls
 
 - POST/PATCH are not retried on 5xx because the operation may have started;
-  keep it that way (see `nonIdempotentRetryOptions`).
+  keep it that way (see `nonIdempotentRetryOptions`). A PUT that creates a
+  resource (for example an environment) must be sent with
+  `withNonIdempotent(ctx)` so it gets the same rules.
+- For non-idempotent requests the client's retry options replace per-call
+  options from `policy.WithRetryOptions`; azcore offers no way to read them.
+- Without a custom Transport, `newDefaultHTTPClient` refuses cross-origin
+  redirects; 3xx responses that reach `send` become `*ResponseError`.
+- Response bodies are capped by `limitTransport` (`MaxResponseBytes`); the
+  error is non-retriable for azcore.
+- `ErrNotFound` matches 404 and the code `EnvironmentNotFound` only; do not
+  widen it to every code ending in "NotFound" (some mean "service not found").
 - `@odata.nextLink` must point to the configured endpoint; others are refused
   so the token is never sent elsewhere.
 - `Retry-After` larger than `Retry.MaxRetryDelay` stops retrying (azcore
@@ -86,8 +97,6 @@ make check    # tidy, lint, test, vuln
   the maximum delay; tests should use small positive delays.
 - `bcadmintest` patterns use `http.ServeMux` syntax; `applications/` needs
   `applications/{$}` to match only that path.
-- The gitleaks version in `.github/workflows/ci.yml` comes with a checksum;
-  update `GITLEAKS_SHA256` when Renovate bumps `GITLEAKS_VERSION`.
 - This repository is public. Never add tenant IDs, environment or customer
   names, internal URLs, email addresses or secrets to code, tests, fixtures,
   commit messages or PR descriptions. Test data uses placeholder GUIDs

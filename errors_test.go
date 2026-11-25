@@ -100,6 +100,49 @@ func TestResponseErrorPassThrough(t *testing.T) {
 			wantInError: []string{"42: numeric code"},
 		},
 		{
+			name:        "wrapped with unexpected field types",
+			body:        `{"error":{"code":"EnvironmentNotFound","message":"gone","details":{"code":"d1","message":"single detail"},"innererror":"text"}}`,
+			status:      http.StatusBadRequest,
+			wantCode:    "EnvironmentNotFound",
+			wantMessage: "gone",
+			wantInError: []string{"EnvironmentNotFound: gone", "details: d1: single detail"},
+			check: func(t *testing.T, re *bcadmin.ResponseError) {
+				if re.InnerError["value"] != "text" {
+					t.Errorf("InnerError = %v", re.InnerError)
+				}
+				if !bcadmin.IsNotFound(re) {
+					t.Error("IsNotFound = false")
+				}
+			},
+		},
+		{
+			name:        "flat keeps target when another field has an unexpected type",
+			body:        `{"code":"X","message":"Y","target":"t","clientError":{"code":"a","message":"b"},"data":"oops"}`,
+			status:      http.StatusBadRequest,
+			wantCode:    "X",
+			wantMessage: "Y",
+			wantInError: []string{"X: Y (target: t)", "client errors: a: b"},
+		},
+		{
+			name:        "wrapped with only innererror",
+			body:        `{"error":{"innererror":{"code":"Deep"}}}`,
+			status:      http.StatusBadRequest,
+			wantInError: []string{`{"error":{"innererror":{"code":"Deep"}}}`},
+			check: func(t *testing.T, re *bcadmin.ResponseError) {
+				if re.InnerError["code"] != "Deep" {
+					t.Errorf("InnerError = %v", re.InnerError)
+				}
+			},
+		},
+		{
+			name:        "control characters are replaced in the error text",
+			body:        `{"code":"Bad","message":"line1\nline2\u001b[31m"}`,
+			status:      http.StatusBadRequest,
+			wantCode:    "Bad",
+			wantMessage: "line1\nline2\u001b[31m",
+			wantInError: []string{"Bad: line1 line2 [31m"},
+		},
+		{
 			name:        "request id",
 			body:        `{"code":"Unknown","message":"Something went wrong."}`,
 			status:      http.StatusBadRequest,
@@ -193,6 +236,7 @@ func TestErrorSentinels(t *testing.T) {
 		{status: http.StatusConflict, conflict: true},
 		{status: http.StatusTooManyRequests, throttled: true},
 		{status: http.StatusBadRequest, body: `{"code":"InvalidInput"}`, code: "InvalidInput"},
+		{status: http.StatusBadRequest, body: `{"code":"TargetServiceNotFound"}`, code: "TargetServiceNotFound"},
 	}
 	for _, tt := range tests {
 		t.Run(http.StatusText(tt.status)+tt.code, func(t *testing.T) {

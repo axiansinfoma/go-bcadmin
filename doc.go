@@ -21,11 +21,11 @@
 //
 // # Long-running operations
 //
-// Calls that start an operation in Business Central (creating, copying or
-// deleting an environment, installing an app, ...) return a [Poller]. Call
+// Operations that run in Business Central are tracked with a [Poller]. Call
 // [Poller.Wait] to block until the operation has finished, or [Poller.Poll] to
-// drive the polling yourself. A poller can be recreated from an operation ID,
-// so a process can pick up an operation another process started.
+// drive the polling yourself. A poller can be recreated from an operation ID
+// with [TenantService.ResumeOperation], so a process can pick up an operation
+// another process started.
 //
 // # Errors
 //
@@ -35,14 +35,24 @@
 // A failed or canceled operation is returned as an [*OperationError] with the
 // operation's error message. Use [errors.As] to inspect them and [errors.Is]
 // with [ErrNotFound], [ErrConflict] or [ErrThrottled] for common checks.
+// Text from the API is kept unchanged in the fields; [ResponseError.Error]
+// replaces control characters so it is safe to log.
 //
 // # Retries
 //
 // Requests are retried on throttling (429) and transient server errors with
 // exponential backoff, honoring the Retry-After header. Requests that are not
-// idempotent (POST, PATCH) are only retried when the service rejected them
-// before processing (429, 503) or the connection could not be established, so
-// an operation is never started twice by a retry. See [ClientOptions].
+// idempotent (POST, PATCH, and PUT requests that create resources) are only
+// retried when the service rejected them before processing (429, or 503 with
+// a Retry-After header) or the connection could not be established, so an
+// operation is not started twice by a retry. See [ClientOptions].
+//
+// # Transport security
+//
+// The default transport requires TLS 1.2, refuses plain HTTP endpoints unless
+// explicitly allowed, and follows redirects only within the endpoint's scheme
+// and host; @odata.nextLink URLs to other hosts are refused. Response bodies
+// are limited to ClientOptions.MaxResponseBytes.
 //
 // # Concurrency
 //

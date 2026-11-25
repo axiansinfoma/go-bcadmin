@@ -88,8 +88,25 @@ type rawBody struct {
 	contentType string
 }
 
+// nonIdempotentKey marks a context whose request must be retried like a POST
+// even though its method is idempotent by definition, for example a PUT that
+// creates an environment.
+type nonIdempotentKey struct{}
+
+// withNonIdempotent returns a context that makes newRequest apply the retry
+// rules of non-idempotent requests.
+func withNonIdempotent(ctx context.Context) context.Context {
+	return context.WithValue(ctx, nonIdempotentKey{}, true)
+}
+
+// newRequest creates a request. Requests that are not idempotent (POST,
+// PATCH, or any request whose ctx was marked with withNonIdempotent) get retry
+// options that only retry when the request cannot have been processed. These
+// options replace retry options a caller set on ctx with
+// policy.WithRetryOptions.
 func (c *Client) newRequest(ctx context.Context, method, u string, body any) (*policy.Request, error) {
-	if !idempotent(method) && !c.retryNonIdempotent {
+	marked, _ := ctx.Value(nonIdempotentKey{}).(bool)
+	if (marked || !idempotent(method)) && !c.retryNonIdempotent {
 		ctx = policy.WithRetryOptions(ctx, c.nonIdempotentRetryOptions())
 	}
 	req, err := runtime.NewRequest(ctx, method, u)
@@ -112,7 +129,7 @@ func (c *Client) newRequest(ctx context.Context, method, u string, body any) (*p
 }
 
 // send sends req through the pipeline and decodes a successful response
-// into out. A response with status >= 400 is returned as *ResponseError. The
+// into out. A response with status >= 300 is returned as *ResponseError. The
 // pipeline reads and closes the response body.
 func (c *Client) send(req *policy.Request, out any) error {
 	resp, err := c.pl.Do(req)
@@ -124,7 +141,8 @@ func (c *Client) send(req *policy.Request, out any) error {
 	if err != nil {
 		return fmt.Errorf("bcadmin: reading response of %s %s: %w", req.Raw().Method, req.Raw().URL.Path, err)
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
+	// 3xx responses only reach this point when a redirect was refused.
+	if resp.StatusCode >= http.StatusMultipleChoices {
 		if resp.Request == nil {
 			resp.Request = req.Raw()
 		}
@@ -159,7 +177,7 @@ func (c *Client) nonIdempotentRetryOptions() policy.RetryOptions {
 		} else {
 			switch {
 			case resp.StatusCode == http.StatusTooManyRequests:
-			case resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get("Retry-After") != "":
+			case resp.StatusCode == http.StatusServiceUnavailable && hasRetryAfter(resp.Header):
 			default:
 				return false
 			}
@@ -173,6 +191,12 @@ func (c *Client) nonIdempotentRetryOptions() policy.RetryOptions {
 		return true
 	}
 	return opts
+}
+
+// hasRetryAfter reports whether h contains one of the retry headers azcore
+// honors.
+func hasRetryAfter(h http.Header) bool {
+	return h.Get("Retry-After") != "" || h.Get("retry-after-ms") != "" || h.Get("x-ms-retry-after-ms") != ""
 }
 
 // isConnectError reports whether err happened while establishing the
@@ -203,8 +227,13 @@ func (p *page[T]) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*plain)(p))
 }
 
+// maxPages limits the number of pages list follows, as a guard against a
+// server that keeps returning further links.
+const maxPages = 10000
+
 // list returns an iterator over all items of a list endpoint, following
-// @odata.nextLink. Iteration stops after the first error.
+// @odata.nextLink. Iteration stops after the first error. A link that was
+// already visited ends the iteration with an error.
 func list[T any](ctx context.Context, c *Client, template string, segments ...string) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var zero T
@@ -218,7 +247,13 @@ func list[T any](ctx context.Context, c *Client, template string, segments ...st
 			yield(zero, err)
 			return
 		}
+		visited := map[string]bool{}
 		for next != "" {
+			if visited[next] || len(visited) >= maxPages {
+				yield(zero, fmt.Errorf("bcadmin: stopping pagination at %s: link was already visited or more than %d pages", next, maxPages))
+				return
+			}
+			visited[next] = true
 			var pg page[T]
 			if err := c.do(ctx, http.MethodGet, next, nil, &pg); err != nil {
 				yield(zero, err)

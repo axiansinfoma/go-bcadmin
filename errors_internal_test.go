@@ -15,6 +15,9 @@ func FuzzResponseErrorDecode(f *testing.F) {
 		``,
 		`{`,
 		`[]`,
+		`{"error":{"code":"X","details":{"x":1},"innererror":"text"}}`,
+		`{"error":"flat string"}`,
+		`{"code":"a\u001b[2Jb","message":null,"target":["t"]}`,
 	} {
 		f.Add(s)
 	}
@@ -25,8 +28,13 @@ func FuzzResponseErrorDecode(f *testing.F) {
 		if !strings.HasPrefix(msg, "bcadmin: 400 Bad Request") {
 			t.Fatalf("Error() = %q", msg)
 		}
-		if e.Message != "" && !strings.Contains(msg, e.Message) {
+		if e.Message != "" && !strings.Contains(msg, clean(e.Message)) {
 			t.Fatalf("Error() = %q does not contain message %q", msg, e.Message)
+		}
+		for _, r := range msg {
+			if r < 0x20 || r == 0x7f {
+				t.Fatalf("Error() = %q contains control character %q", msg, r)
+			}
 		}
 	})
 }

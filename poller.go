@@ -19,12 +19,6 @@ type WaitOptions struct {
 	// scheduled operation has run (which can take until the next update
 	// window or update).
 	TreatScheduledAsDone bool
-
-	// UntilEnvironmentActive makes Wait, for operations that create or
-	// change an environment, keep polling the environment after the
-	// operation succeeded until the environment's status is Active.
-	// It is ignored by pollers of other operations.
-	UntilEnvironmentActive bool
 }
 
 // Poller tracks a long-running operation. T is the type of the result, for
@@ -142,7 +136,7 @@ func (p *Poller[T]) Wait(ctx context.Context, opts *WaitOptions) (T, error) {
 			return p.resultWith(ctx, opts)
 		}
 		if scheduledIsDone && p.Scheduled() {
-			return zero, fmt.Errorf("operation %s: %w", p.op.ID, ErrOperationScheduled)
+			return zero, fmt.Errorf("%w: operation %s", ErrOperationScheduled, p.op.ID)
 		}
 		timer.Reset(freq)
 		select {

@@ -69,14 +69,20 @@ no backports.
 
 ## Security Properties You Can Rely On
 
-- **Tokens go only to the configured endpoint.** Requests use HTTPS. An
-  `http://` endpoint is rejected unless `InsecureAllowCredentialWithHTTP` is
-  set. `@odata.nextLink` URLs that point to another scheme or host are refused.
+- **Tokens go only to the configured endpoint.** Requests use HTTPS (TLS 1.2 or
+  later with the default transport). An `http://` endpoint is rejected unless
+  `InsecureAllowCredentialWithHTTP` is set. `@odata.nextLink` URLs and redirects
+  that point to another scheme or host are not followed. A custom
+  `ClientOptions.Transport` is responsible for its own redirect policy.
+- **Bounded responses.** Response bodies larger than `MaxResponseBytes`
+  (default 64 MiB) are rejected.
 - **Caller-supplied path segments cannot change the path.** Each segment is
   validated (no `/`, `\`, `.`, `..` or control characters) and escaped.
-- **Non-idempotent requests are not repeated.** POST and PATCH requests are
+- **Non-idempotent requests are not repeated.** POST, PATCH and creating PUT
+  requests are
   only retried when the service rejected them before processing (429, or 503
   with `Retry-After`) or the connection could not be established, unless
   `RetryNonIdempotent` is set.
 - **No secrets in errors.** Error messages contain the request method, path and
-  the API's error body, never request headers or tokens.
+  the API's error body, never request headers or tokens. Control characters in
+  server text are replaced in error messages.

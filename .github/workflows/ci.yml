@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    # The same shell on Linux and Windows runners.
+    shell: bash
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -18,7 +23,7 @@ env:
   GOLANGCI_LINT_VERSION: "v2.15.0"
   # renovate: datasource=go depName=golang.org/x/vuln
   GOVULNCHECK_VERSION: "v1.10.0"
-  # renovate: datasource=github-releases depName=gitleaks/gitleaks
+  # renovate: datasource=go depName=github.com/zricethezav/gitleaks/v8
   GITLEAKS_VERSION: "v8.30.1"
 
 jobs:
@@ -97,18 +102,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      # go install verifies the module against the Go checksum database.
       - name: Install gitleaks
-        env:
-          # sha256 of gitleaks_<version>_linux_x64.tar.gz from the release's checksums file.
-          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-        run: |
-          version="${GITLEAKS_VERSION#v}"
-          archive="gitleaks_${version}_linux_x64.tar.gz"
-          curl -sSfL -o "$RUNNER_TEMP/$archive" "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/${archive}"
-          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+        run: go install "github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}"
       - name: gitleaks
-        run: '"$RUNNER_TEMP/gitleaks" git --redact --verbose --exit-code 1 .'
+        run: '"$(go env GOPATH)/bin/gitleaks" git --redact --verbose --exit-code 1 .'
 
   apicompat:
     name: API compatibility

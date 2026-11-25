@@ -49,22 +49,32 @@ var apiVersionPattern = regexp.MustCompile(`^v\d+\.\d+$`)
 //     RetryNonIdempotent for POST and PATCH requests.
 //   - Telemetry.ApplicationID is added to the User-Agent header.
 //   - Transport, Logging, PerCallPolicies and PerRetryPolicies work as in
-//     the Azure SDK for Go.
+//     the Azure SDK for Go. The default transport requires TLS 1.2 and
+//     follows redirects only to the same scheme and host; a custom Transport
+//     is responsible for its own redirect policy.
 //   - InsecureAllowCredentialWithHTTP allows an http:// endpoint, which sends
 //     the bearer token in clear text. Use it only for tests.
 type ClientOptions struct {
 	azcore.ClientOptions
 
-	// RetryNonIdempotent allows retrying POST and PATCH requests on every
-	// status code in Retry.StatusCodes and on every transport error. By
-	// default they are only retried on 429, on 503 with a Retry-After header,
-	// and when the connection could not be established, because the
-	// service may already have started the requested operation.
+	// RetryNonIdempotent allows retrying POST and PATCH requests (and PUT
+	// requests that create resources) on every status code in
+	// Retry.StatusCodes and on every transport error. By default they are only
+	// retried on 429, on 503 with a Retry-After header, and when the connection
+	// could not be established, because the service may already have started
+	// the requested operation. For these requests the client's Retry options
+	// apply even when a caller sets per-call options with
+	// policy.WithRetryOptions.
 	RetryNonIdempotent bool
 
 	// PollFrequency is the default interval between two status requests of a
 	// Poller. The default is DefaultPollFrequency.
 	PollFrequency time.Duration
+
+	// MaxResponseBytes is the largest response body the client reads. A
+	// larger response fails with ErrResponseTooLarge. The default is
+	// DefaultMaxResponseBytes.
+	MaxResponseBytes int64
 }
 
 // Client is a client for the Business Central Admin Center API. Create it with
@@ -123,7 +133,16 @@ func NewClient(cred azcore.TokenCredential, options *ClientOptions) (*Client, er
 	base = base.JoinPath("admin", apiVersion)
 
 	scope := strings.TrimRight(audience, "/") + "/.default"
+	if opts.Transport == nil {
+		// Keep the default client in opts so ForTenant shares its connections.
+		opts.Transport = newDefaultHTTPClient()
+	}
+	maxResponse := opts.MaxResponseBytes
+	if maxResponse <= 0 {
+		maxResponse = DefaultMaxResponseBytes
+	}
 	pipelineOpts := opts.ClientOptions
+	pipelineOpts.Transport = &limitTransport{next: opts.Transport, max: maxResponse}
 	// The API version is part of the path, not a query parameter.
 	pipelineOpts.APIVersion = ""
 	pl := runtime.NewPipeline(moduleName, moduleVersion(), runtime.PipelineOptions{

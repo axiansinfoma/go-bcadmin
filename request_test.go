@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -92,6 +91,7 @@ func TestRetries(t *testing.T) {
 		{name: "GET 400 not retried", method: http.MethodGet, status: http.StatusBadRequest, wantCalls: 1},
 		{name: "POST 429 retried", method: http.MethodPost, status: http.StatusTooManyRequests, wantCalls: 2, wantOK: true},
 		{name: "POST 503 with Retry-After retried", method: http.MethodPost, status: http.StatusServiceUnavailable, header: http.Header{"Retry-After": {"0"}}, wantCalls: 2, wantOK: true},
+		{name: "POST 503 with retry-after-ms retried", method: http.MethodPost, status: http.StatusServiceUnavailable, header: http.Header{"Retry-After-Ms": {"0"}}, wantCalls: 2, wantOK: true},
 		{name: "POST 503 without Retry-After not retried", method: http.MethodPost, status: http.StatusServiceUnavailable, wantCalls: 1},
 		{name: "POST 500 not retried", method: http.MethodPost, status: http.StatusInternalServerError, wantCalls: 1},
 		{name: "PATCH 502 not retried", method: http.MethodPatch, status: http.StatusBadGateway, wantCalls: 1},
@@ -254,6 +254,22 @@ func TestPaginationRefusesForeignHost(t *testing.T) {
 	}
 }
 
+func TestPaginationLoop(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "environments/operations", http.StatusOK, map[string]any{
+		"value":           []map[string]string{{"id": "1"}},
+		"@odata.nextLink": "/admin/v2.29/environments/operations",
+	})
+	_, err := srv.NewClient(t).Tenant().Operations(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "already visited") {
+		t.Errorf("error = %v", err)
+	}
+	if n := len(srv.Requests()); n != 1 {
+		t.Errorf("requests = %d, want 1", n)
+	}
+}
+
 func TestBareArrayList(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t)
@@ -276,18 +292,5 @@ func TestContextCanceled(t *testing.T) {
 	_, err := srv.NewClient(t).Tenant().Quotas(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error = %v, want context.Canceled", err)
-	}
-}
-
-func ExampleClient_Do() {
-	// Do calls endpoints this package does not wrap yet. The path is relative
-	// to the versioned API root.
-	var c *bcadmin.Client // from bcadmin.NewClient
-	if c == nil {
-		return
-	}
-	var quotas map[string]any
-	if err := c.Do(context.Background(), http.MethodGet, "environments/quotas", nil, &quotas); err != nil {
-		fmt.Println(err)
 	}
 }

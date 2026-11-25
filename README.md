@@ -115,14 +115,15 @@ details the API sent: status, `Code`, `Message`, `Target`, `ClientErrors`,
 `Details`, `Data.Requirements` (missing app dependencies), the request ID and
 the raw body. Both the flat (`{"code","message"}`) and the wrapped
 (`{"error":{...}}`) error formats are understood; non-JSON bodies are kept in
-`RawBody` and shown in the error text.
+`RawBody` and shown in the error text. `Error()` replaces control characters so
+the text is safe to log; the fields keep the original text.
 
 ```go
 var re *bcadmin.ResponseError
 if errors.As(err, &re) {
 	log.Printf("API error %s: %s (request %s)", re.Code, re.Message, re.RequestID)
 }
-if bcadmin.IsNotFound(err) { /* 404, or an error code ending in NotFound */ }
+if bcadmin.IsNotFound(err) { /* 404, or the code EnvironmentNotFound */ }
 ```
 
 ## Retries
@@ -133,10 +134,15 @@ Configure it with `ClientOptions.Retry` (the
 
 - GET, PUT and DELETE are retried on 408, 429, 500, 502, 503 and 504 and on
   network errors.
-- POST and PATCH start operations and are therefore only retried when the
-  request cannot have been processed: on 429, on 503 with `Retry-After`, and when
-  the connection could not be established. Set
-  `ClientOptions.RetryNonIdempotent` to retry them like GET.
+- POST and PATCH (and PUT requests that create resources) start operations and
+  are therefore only retried when the request cannot have been processed: on 429,
+  on 503 with `Retry-After`, and when the connection could not be established.
+  Set `ClientOptions.RetryNonIdempotent` to retry them like GET.
+- Responses larger than `ClientOptions.MaxResponseBytes` (default 64 MiB) fail
+  with `bcadmin.ErrResponseTooLarge` and are not retried.
+
+The default transport requires TLS 1.2 and follows redirects only within the
+endpoint's scheme and host, so the access token is never sent elsewhere.
 
 ## Configuration
 

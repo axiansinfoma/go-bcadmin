@@ -7,14 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 )
 
 // Sentinel errors for use with [errors.Is]. A [*ResponseError] matches them
 // based on its HTTP status and error code.
 var (
-	// ErrNotFound matches responses with HTTP status 404 and responses whose
-	// error code ends in "NotFound" (for example "EnvironmentNotFound"), which
-	// the API also returns with other status codes.
+	// ErrNotFound matches responses with HTTP status 404 and responses with
+	// the error code "EnvironmentNotFound", which the API also returns with
+	// other status codes. Use [ErrorCode] to check for other error codes.
 	ErrNotFound = errors.New("bcadmin: not found")
 
 	// ErrConflict matches responses with HTTP status 409.
@@ -113,22 +114,6 @@ type ResponseError struct {
 	RawBody []byte
 }
 
-// errorBody is the wire form of an error response body.
-type errorBody struct {
-	Code          string         `json:"code"`
-	Message       string         `json:"message"`
-	Target        string         `json:"target"`
-	ClientError   []ErrorDetail  `json:"clientError"`
-	Details       []ErrorDetail  `json:"details"`
-	ExtensionData map[string]any `json:"extensionData"`
-	InnerError    map[string]any `json:"innererror"`
-	Data          *ErrorData     `json:"data"`
-}
-
-func (b *errorBody) empty() bool {
-	return b.Code == "" && b.Message == "" && b.Target == "" && len(b.ClientError) == 0 && len(b.Details) == 0
-}
-
 // newResponseError builds a ResponseError from resp and its body, keeping at
 // most maxErrorBody bytes of the body.
 func newResponseError(resp *http.Response, body []byte) *ResponseError {
@@ -157,38 +142,93 @@ func newResponseError(resp *http.Response, body []byte) *ResponseError {
 	return e
 }
 
-// decodeBody fills the error fields from RawBody, accepting the flat and the
-// wrapped ("error") shape.
+// decodeBody fills the error fields from RawBody. It accepts the flat and the
+// wrapped ("error") shape and decodes each field on its own, so a field with an
+// unexpected type does not prevent the others from being decoded.
 func (e *ResponseError) decodeBody() {
-	trimmed := bytes.TrimSpace(e.RawBody)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
+	fields := jsonObject(e.RawBody)
+	if fields == nil {
 		return
 	}
-	var wrapped struct {
-		Error *errorBody `json:"error"`
+	if inner := jsonObject(fields["error"]); len(inner) > 0 {
+		fields = inner
 	}
-	var body errorBody
-	if err := json.Unmarshal(trimmed, &wrapped); err == nil && wrapped.Error != nil && !wrapped.Error.empty() {
-		body = *wrapped.Error
-	} else if err := json.Unmarshal(trimmed, &body); err != nil {
-		// Some fields may have unexpected types; fall back to code and
-		// message only so the API's message still reaches the caller.
-		var minimal struct {
-			Code    any `json:"code"`
-			Message any `json:"message"`
-		}
-		if json.Unmarshal(trimmed, &minimal) == nil {
-			body = errorBody{Code: stringify(minimal.Code), Message: stringify(minimal.Message)}
+	e.Code = jsonString(fields["code"])
+	e.Message = jsonString(fields["message"])
+	e.Target = jsonString(fields["target"])
+	e.ClientErrors = jsonDetails(fields["clienterror"])
+	e.Details = jsonDetails(fields["details"])
+	e.ExtensionData = jsonMap(fields["extensiondata"])
+	e.InnerError = jsonMap(fields["innererror"])
+	if raw, ok := fields["data"]; ok {
+		var d ErrorData
+		if json.Unmarshal(raw, &d) == nil && len(d.Requirements) > 0 {
+			e.Data = &d
 		}
 	}
-	e.Code = body.Code
-	e.Message = body.Message
-	e.Target = body.Target
-	e.ClientErrors = body.ClientError
-	e.Details = body.Details
-	e.ExtensionData = body.ExtensionData
-	e.InnerError = body.InnerError
-	e.Data = body.Data
+}
+
+// jsonObject decodes raw as a JSON object and returns its members with
+// lower-cased keys, or nil if raw is not an object.
+func jsonObject(raw []byte) map[string]json.RawMessage {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(m))
+	for k, v := range m {
+		out[strings.ToLower(k)] = v
+	}
+	return out
+}
+
+// jsonString returns a JSON string as is and any other JSON value in its JSON
+// form, so no value the API sent is lost.
+func jsonString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return stringify(v)
+}
+
+// jsonDetails decodes a list of error details, or a single detail object.
+func jsonDetails(raw json.RawMessage) []ErrorDetail {
+	if len(raw) == 0 {
+		return nil
+	}
+	var list []ErrorDetail
+	if json.Unmarshal(raw, &list) == nil {
+		return list
+	}
+	var one ErrorDetail
+	if json.Unmarshal(raw, &one) == nil && (one.Code != "" || one.Message != "") {
+		return []ErrorDetail{one}
+	}
+	return nil
+}
+
+// jsonMap decodes an object; any other non-null value is returned as
+// {"value": value}.
+func jsonMap(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil || v == nil {
+		return nil
+	}
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{"value": v}
 }
 
 func stringify(v any) string {
@@ -211,10 +251,10 @@ func (e *ResponseError) Error() string {
 	var b strings.Builder
 	b.WriteString("bcadmin: ")
 	if e.Method != "" || e.Path != "" {
-		fmt.Fprintf(&b, "%s: ", strings.TrimSpace(e.Method+" "+e.Path))
+		fmt.Fprintf(&b, "%s: ", clean(strings.TrimSpace(e.Method+" "+e.Path)))
 	}
 	if e.Status != "" {
-		b.WriteString(e.Status)
+		b.WriteString(clean(e.Status))
 	} else {
 		fmt.Fprintf(&b, "%d %s", e.StatusCode, http.StatusText(e.StatusCode))
 	}
@@ -223,14 +263,14 @@ func (e *ResponseError) Error() string {
 		b.WriteString(": ")
 		switch {
 		case e.Code != "" && e.Message != "":
-			fmt.Fprintf(&b, "%s: %s", e.Code, e.Message)
+			fmt.Fprintf(&b, "%s: %s", clean(e.Code), clean(e.Message))
 		case e.Code != "":
-			b.WriteString(e.Code)
+			b.WriteString(clean(e.Code))
 		default:
-			b.WriteString(e.Message)
+			b.WriteString(clean(e.Message))
 		}
 		if e.Target != "" {
-			fmt.Fprintf(&b, " (target: %s)", e.Target)
+			fmt.Fprintf(&b, " (target: %s)", clean(e.Target))
 		}
 		writeDetails(&b, "client errors", e.ClientErrors)
 		writeDetails(&b, "details", e.Details)
@@ -240,11 +280,11 @@ func (e *ResponseError) Error() string {
 				if i > 0 {
 					b.WriteString(", ")
 				}
-				fmt.Fprintf(&b, "%s %s (%s)", r.Name, r.Version, r.AppID)
+				fmt.Fprintf(&b, "%s %s (%s)", clean(r.Name), clean(r.Version), clean(r.AppID))
 			}
 		}
 	case len(bytes.TrimSpace(e.RawBody)) > 0:
-		raw := string(bytes.TrimSpace(e.RawBody))
+		raw := clean(string(bytes.TrimSpace(e.RawBody)))
 		if len(raw) > maxErrorBodyInMessage {
 			raw = raw[:maxErrorBodyInMessage] + "... (truncated, see RawBody)"
 		}
@@ -252,7 +292,7 @@ func (e *ResponseError) Error() string {
 		b.WriteString(raw)
 	}
 	if e.RequestID != "" {
-		fmt.Fprintf(&b, " [request-id: %s]", e.RequestID)
+		fmt.Fprintf(&b, " [request-id: %s]", clean(e.RequestID))
 	}
 	return b.String()
 }
@@ -268,16 +308,28 @@ func writeDetails(b *strings.Builder, label string, details []ErrorDetail) {
 		}
 		switch {
 		case d.Code != "" && d.Message != "":
-			fmt.Fprintf(b, "%s: %s", d.Code, d.Message)
+			fmt.Fprintf(b, "%s: %s", clean(d.Code), clean(d.Message))
 		case d.Code != "":
-			b.WriteString(d.Code)
+			b.WriteString(clean(d.Code))
 		default:
-			b.WriteString(d.Message)
+			b.WriteString(clean(d.Message))
 		}
 		if d.Target != "" {
-			fmt.Fprintf(b, " (target: %s)", d.Target)
+			fmt.Fprintf(b, " (target: %s)", clean(d.Target))
 		}
 	}
+}
+
+// clean replaces control characters (including newlines and terminal escape
+// sequences) with spaces, so server-provided text cannot garble log output.
+// The fields of ResponseError keep the original text.
+func clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // Is reports whether the error matches one of the sentinels [ErrNotFound],
@@ -285,7 +337,7 @@ func writeDetails(b *strings.Builder, label string, details []ErrorDetail) {
 func (e *ResponseError) Is(target error) bool {
 	switch target {
 	case ErrNotFound:
-		return e.StatusCode == http.StatusNotFound || strings.HasSuffix(strings.ToLower(e.Code), "notfound")
+		return e.StatusCode == http.StatusNotFound || strings.EqualFold(e.Code, "EnvironmentNotFound")
 	case ErrConflict:
 		return e.StatusCode == http.StatusConflict
 	case ErrThrottled:
