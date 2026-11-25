@@ -169,6 +169,22 @@ func TestPollerPollError(t *testing.T) {
 	}
 }
 
+func TestPollerRejectsOtherOperation(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "environments/operations/{id}", http.StatusOK, map[string]any{"id": "other", "status": "Succeeded"})
+	p, err := srv.NewClient(t).Tenant().ResumeOperation("op-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Poll(context.Background()); err == nil || !strings.Contains(err.Error(), "returned operation other") {
+		t.Errorf("Poll() error = %v", err)
+	}
+	if p.ID() != "op-5" || p.Done() {
+		t.Errorf("poller state changed: %q, done %v", p.ID(), p.Done())
+	}
+}
+
 func TestOperationStatus(t *testing.T) {
 	t.Parallel()
 	terminal := []bcadmin.OperationStatus{"succeeded", "Failed", "CANCELED", "cancelled", "Skipped"}

@@ -230,7 +230,7 @@ func (s *EnvironmentsService) Recover(ctx context.Context, family, name string) 
 
 // Rename renames an environment and returns a poller whose result is the
 // renamed environment. The endpoint exists since API v2.3; this client needs
-// v2.6 or later to track the operation.
+// v2.7 or later to track the operation.
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/rename.
 func (s *EnvironmentsService) Rename(ctx context.Context, family, name, newName string) (*Poller[*Environment], error) {
@@ -240,7 +240,7 @@ func (s *EnvironmentsService) Rename(ctx context.Context, family, name, newName 
 	body := struct {
 		NewEnvironmentName string `json:"NewEnvironmentName"`
 	}{newName}
-	return s.startEnvironmentOperation(ctx, minorTrackableOperations, http.MethodPost,
+	return s.startEnvironmentOperation(ctx, minorTrackableRename, http.MethodPost,
 		"applications/{}/environments/{}/rename", []string{family, name}, body, family, newName)
 }
 
@@ -305,12 +305,36 @@ func (s *EnvironmentsService) GetOperation(ctx context.Context, family, name, op
 
 // ResumeOperation returns a poller for an operation of the environment that
 // was started earlier, for example by another process. Its result is the
-// final operation.
+// final operation. The poller only finds operations of this environment; use
+// [TenantService.ResumeOperation] for an operation whose environment has
+// been renamed or deleted since.
 func (s *EnvironmentsService) ResumeOperation(family, name, operationID string) (*Poller[*Operation], error) {
 	if _, err := path("applications/{}/environments/{}/operations/{}", family, name, operationID); err != nil {
 		return nil, err
 	}
-	return newPoller(s.c, &Operation{ID: operationID}, s.operationFetcher(family, name, operationID), operationResult), nil
+	return newPoller(s.c, &Operation{ID: operationID}, s.scopedOperationFetcher(family, name, operationID), operationResult), nil
+}
+
+// scopedOperationFetcher returns a function that requests an operation only
+// if it belongs to the environment family/name: with API v2.28 and later
+// through the environment-scoped GET, before through the environment's
+// operation list.
+func (s *EnvironmentsService) scopedOperationFetcher(family, name, id string) func(context.Context) (*Operation, error) {
+	return func(ctx context.Context) (*Operation, error) {
+		if s.c.apiVersionAtLeast(2, 28) {
+			return s.GetOperation(ctx, family, name, id)
+		}
+		ops, err := s.Operations(ctx, family, name)
+		if err != nil {
+			return nil, err
+		}
+		for i := range ops {
+			if asciiEqualFold(ops[i].ID, id) {
+				return &ops[i], nil
+			}
+		}
+		return nil, fmt.Errorf("bcadmin: operation %s not found in the operations of environment %s: %w", clean(id), clean(name), ErrNotFound)
+	}
 }
 
 // MatchProductionConfigurationMetrics tells whether the sandbox can get the
@@ -380,9 +404,12 @@ const (
 	// Create, copy and delete return an operation since v2.9; before, they
 	// answer without one.
 	minorTrackableCreate = 9
-	// Rename (v2.3) and restore (v2.4) return an operation, but operations
-	// can only be polled since v2.6.
+	// Restore (v2.4) returns an operation, but operations can only be polled
+	// since v2.6.
 	minorTrackableOperations = 6
+	// Rename (v2.3) needs the operations of all environments (v2.7), because
+	// the environment's name changes while the operation runs.
+	minorTrackableRename = 7
 	// Recover exists since v2.18.
 	minorRecover = 18
 )
@@ -441,7 +468,7 @@ func (s *EnvironmentsService) operationFetcher(family, name, id string, more ...
 				return nil, err
 			}
 			for i := range ops {
-				if ops[i].ID == id {
+				if asciiEqualFold(ops[i].ID, id) {
 					return &ops[i], nil
 				}
 			}
@@ -452,7 +479,7 @@ func (s *EnvironmentsService) operationFetcher(family, name, id string, more ...
 				return nil, err
 			}
 			for i := range ops {
-				if ops[i].ID == id {
+				if asciiEqualFold(ops[i].ID, id) {
 					return &ops[i], nil
 				}
 			}
@@ -465,7 +492,11 @@ func (s *EnvironmentsService) operationFetcher(family, name, id string, more ...
 // the environment family/name.
 func (s *EnvironmentsService) environmentResult(family, name string) func(context.Context, *Operation, *WaitOptions) (*Environment, error) {
 	return func(ctx context.Context, _ *Operation, opts *WaitOptions) (*Environment, error) {
+		waiting := "environment " + name
 		env, err := s.Get(ctx, family, name)
+		if err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return nil, waitError(ctx, waiting)
+		}
 		if err != nil || opts == nil || !opts.UntilEnvironmentActive {
 			return env, err
 		}

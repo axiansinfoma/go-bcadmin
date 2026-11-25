@@ -85,6 +85,9 @@ func (p *Poller[T]) Poll(ctx context.Context) (*Operation, error) {
 	if op.ID == "" {
 		op.ID = p.op.ID
 	}
+	if p.op.ID != "" && !asciiEqualFold(op.ID, p.op.ID) {
+		return nil, fmt.Errorf("bcadmin: polling operation %s returned operation %s", clean(p.op.ID), clean(op.ID))
+	}
 	p.op = *op
 	return p.Operation(), nil
 }

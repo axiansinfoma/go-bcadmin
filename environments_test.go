@@ -495,14 +495,25 @@ func TestPollingBeforeV228FollowsRenameAndDeletedEnvironments(t *testing.T) {
 	if _, ok := fake.Get(bc, "old"); ok {
 		t.Fatal("rename did not finish")
 	}
+	before := len(srv.Requests())
 	env, err := p.Wait(ctx, nil)
 	if err != nil || env.Name != "new" {
 		t.Fatalf("rename = %+v, %v", env, err)
 	}
-	// The poller skipped the vanished environment and found the operation
-	// under the new name.
-	findRequest(t, srv, http.MethodGet, "/admin/v2.27/applications/BusinessCentral/environments/old/operations")
-	findRequest(t, srv, http.MethodGet, "/admin/v2.27/applications/BusinessCentral/environments/new/operations")
+	// The poller skipped the vanished environment (404) and found the
+	// operation under the new name, without the tenant-wide list.
+	var paths []string
+	for _, r := range srv.Requests()[before:] {
+		paths = append(paths, r.Path)
+	}
+	want := []string{
+		"/admin/v2.27/applications/BusinessCentral/environments/old/operations",
+		"/admin/v2.27/applications/BusinessCentral/environments/new/operations",
+		"/admin/v2.27/applications/BusinessCentral/environments/new",
+	}
+	if strings.Join(paths, " ") != strings.Join(want, " ") {
+		t.Errorf("requests of Wait = %v, want %v", paths, want)
+	}
 
 	// An operation of an environment that no longer exists is found in the
 	// operations of all environments.
@@ -516,6 +527,61 @@ func TestPollingBeforeV228FollowsRenameAndDeletedEnvironments(t *testing.T) {
 	}
 	if op, err := dp.Wait(context.Background(), nil); err != nil || !op.Status.Is(bcadmin.OperationStatusSucceeded) {
 		t.Errorf("delete = %+v, %v", op, err)
+	}
+}
+
+func TestResultKeepsContextCause(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "applications/{family}/environments/{env}/recover", http.StatusAccepted, map[string]any{"id": "op-6", "status": "succeeded"})
+	srv.Handle(http.MethodGet, "applications/{family}/environments/{env}", func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	p, err := srv.NewClient(t).Environments().Recover(context.Background(), bc, "uat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("shutting down")
+	ctx, cancel := context.WithTimeoutCause(context.Background(), 50*time.Millisecond, cause)
+	defer cancel()
+	if _, err := p.Wait(ctx, nil); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, cause) {
+		t.Errorf("Wait() error = %v, want DeadlineExceeded and the cause", err)
+	}
+}
+
+func TestResumeOperationIsScopedToEnvironment(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	fake := srv.EnableEnvironments()
+	fake.Add(bcadmin.Environment{Name: "a", Type: bcadmin.EnvironmentTypeSandbox})
+	fake.Add(bcadmin.Environment{Name: "b", Type: bcadmin.EnvironmentTypeSandbox})
+	c := srv.NewClient(t)
+	p, err := c.Environments().MatchProductionConfiguration(context.Background(), bc, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := c.Environments().ResumeOperation(bc, "b", p.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Wait(context.Background(), nil); !bcadmin.IsNotFound(err) {
+		t.Errorf("resuming another environment's operation: %v", err)
+	}
+	// Before v2.28 the environment's operation list is searched.
+	srv27 := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.27"))
+	fake27 := srv27.EnableEnvironments()
+	fake27.Add(bcadmin.Environment{Name: "a", Type: bcadmin.EnvironmentTypeSandbox})
+	c27 := srv27.NewClient(t)
+	p27, err := c27.Environments().MatchProductionConfiguration(context.Background(), bc, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := c27.Environments().ResumeOperation(bc, "a", p27.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op, err := resumed.Wait(context.Background(), nil); err != nil || op.ID != p27.ID() {
+		t.Errorf("resume before v2.28 = %+v, %v", op, err)
 	}
 }
 
@@ -537,11 +603,11 @@ func TestWaitUntilActiveKeepsContextCause(t *testing.T) {
 	}
 }
 
-func TestRenameAndRestoreNeedV26(t *testing.T) {
+func TestRenameAndRestoreMinimumVersions(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.5"))
 	envs := srv.NewClient(t).Environments()
-	if _, err := envs.Rename(context.Background(), bc, "a", "b"); err == nil || !strings.Contains(err.Error(), "v2.6") {
+	if _, err := envs.Rename(context.Background(), bc, "a", "b"); err == nil || !strings.Contains(err.Error(), "v2.7") {
 		t.Errorf("rename error = %v", err)
 	}
 	if _, err := envs.Restore(context.Background(), bc, "a", bcadmin.RestoreOptions{EnvironmentName: "b", EnvironmentType: "Sandbox", PointInTime: time.Now()}); err == nil || !strings.Contains(err.Error(), "v2.6") {

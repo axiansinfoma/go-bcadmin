@@ -77,6 +77,8 @@ type Environment struct {
 	// RingName is the release ring, for example "Prod" or "Preview".
 	RingName string `json:"ringName,omitempty"`
 	// AppInsightsKey is the Application Insights key or connection string.
+	// It can grant write access to the telemetry resource; avoid logging
+	// whole Environment values (for example with %+v).
 	AppInsightsKey string `json:"appInsightsKey,omitempty"`
 	// SoftDeletedOn is when the environment was soft deleted.
 	SoftDeletedOn *Time `json:"softDeletedOn,omitempty"`

@@ -109,10 +109,61 @@ func TestEnvironmentsFakeConflictsAndCopies(t *testing.T) {
 			t.Error("Operations does not return deep copies")
 		}
 	}
+	// Operations on a busy environment are refused.
+	if _, err := envs.Delete(ctx, fam, "c"); bcadmin.ErrorCode(err) != "environmentOperationInProgress" {
+		t.Errorf("delete during create: %v", err)
+	}
 	got, _ := fake.Get(fam, "a")
 	got.VersionDetails.Version = "changed"
 	again, _ := fake.Get(fam, "a")
 	if again.VersionDetails.Version != "27.0" {
 		t.Error("Get does not return a deep copy")
+	}
+}
+
+func TestEnvironmentsFakeDeleteRules(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	fake := srv.EnableEnvironments()
+	fake.Add(bcadmin.Environment{Name: "ok", Type: bcadmin.EnvironmentTypeSandbox})
+	fake.Add(bcadmin.Environment{Name: "broken", Type: bcadmin.EnvironmentTypeSandbox, Status: bcadmin.EnvironmentStatusCreatingFailed})
+	fake.SetPollsUntilDone(3)
+	c := srv.NewClient(t)
+	ctx := context.Background()
+	fam := bcadmin.FamilyBusinessCentral
+
+	p, err := c.Environments().Delete(ctx, fam, "ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Environments().Delete(ctx, fam, "ok"); bcadmin.ErrorCode(err) != "tenantDeletionInProgress" {
+		t.Errorf("second delete: %v", err)
+	}
+	if _, err := p.Wait(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Environments().Delete(ctx, fam, "ok"); bcadmin.ErrorCode(err) != "invalidStatusCannotDeleteTenant" {
+		t.Errorf("delete of a soft-deleted environment: %v", err)
+	}
+
+	hp, err := c.Environments().Delete(ctx, fam, "broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := hp.Wait(ctx, nil)
+	if err != nil || !op.Type.Is(bcadmin.OperationTypeDelete) {
+		t.Fatalf("hard delete = %+v, %v", op, err)
+	}
+	if _, ok := fake.Get(fam, "broken"); ok {
+		t.Error("CreatingFailed environment still exists after delete")
+	}
+
+	fake.FailNextOperation("boom")
+	fp, err := c.Environments().Create(ctx, fam, "new", bcadmin.CreateEnvironmentOptions{Type: "Sandbox", CountryCode: "DE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fp.Operation().ErrorMessage != "" {
+		t.Error("the error message is in the 202 response")
 	}
 }

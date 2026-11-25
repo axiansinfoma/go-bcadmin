@@ -20,7 +20,12 @@ import (
 // change the stored environments. Environments that an operation creates
 // (create, copy, restore) appear right away with status Preparing, and get
 // status Active when the operation succeeds or CreatingFailed when it fails.
-// It is safe for concurrent use.
+// Like the service, the fake refuses operations on environments that are
+// busy with another operation or not Active; where the documentation names
+// no error code for that, it uses "environmentOperationInProgress" (409) and
+// "invalidEnvironmentStatus" (400). Deleting a CreatingFailed or
+// RemovingFailed environment removes it permanently (operation type
+// "delete"). It is safe for concurrent use.
 type Environments struct {
 	mu      sync.Mutex
 	envs    map[string]*bcadmin.Environment // key: lower(family)/lower(name)
@@ -36,6 +41,8 @@ type fakeOperation struct {
 	name     string
 	reserves string // environment key reserved until the operation ends
 	creates  string // key of the environment the operation creates
+	alias    string // other environment name the operation is listed under (rename target)
+	fail     string // error message the operation fails with
 	polls    int
 	apply    func(e *Environments)
 }
@@ -192,6 +199,40 @@ func (e *Environments) taken(family, name string) bool {
 	return false
 }
 
+// belongsTo reports whether the operation is listed under the environment
+// family/name: its environment, or the new name of a rename.
+func (o *fakeOperation) belongsTo(family, name string) bool {
+	return strings.EqualFold(o.family, family) &&
+		(strings.EqualFold(o.name, name) || (o.alias != "" && strings.EqualFold(o.alias, name)))
+}
+
+// pending returns the running operation of the environment family/name, or
+// nil. e.mu must be held.
+func (e *Environments) pending(family, name string) *fakeOperation {
+	key := envKey(family, name)
+	for _, o := range e.ops {
+		if !o.op.Status.Terminal() && (o.belongsTo(family, name) || o.creates == key) {
+			return o
+		}
+	}
+	return nil
+}
+
+// ready checks that env can start an operation: no other operation is
+// running on it and it has status Active. It writes the error otherwise.
+// e.mu must be held.
+func (e *Environments) ready(w http.ResponseWriter, env *bcadmin.Environment) bool {
+	if e.pending(env.ApplicationFamily, env.Name) != nil {
+		WriteError(w, http.StatusConflict, "environmentOperationInProgress", fmt.Sprintf("Another operation is running on environment '%s'.", env.Name))
+		return false
+	}
+	if !env.Status.Is(bcadmin.EnvironmentStatusActive) {
+		WriteError(w, http.StatusBadRequest, "invalidEnvironmentStatus", fmt.Sprintf("Environment '%s' has status %s.", env.Name, env.Status))
+		return false
+	}
+	return true
+}
+
 // conflict writes the error for a name that is taken. e.mu must be held.
 func conflict(w http.ResponseWriter, name string) {
 	WriteError(w, http.StatusConflict, "resourceExists", fmt.Sprintf("An environment named '%s' already exists.", name))
@@ -218,6 +259,7 @@ func (e *Environments) start(w http.ResponseWriter, typ bcadmin.OperationType, f
 	fo := &fakeOperation{op: op, family: family, name: name, apply: apply}
 	if reserve != "" {
 		fo.reserves = envKey(family, reserve)
+		fo.alias = reserve
 	}
 	if creates != nil {
 		pre := *creates
@@ -226,7 +268,7 @@ func (e *Environments) start(w http.ResponseWriter, typ bcadmin.OperationType, f
 		fo.creates = envKey(pre.ApplicationFamily, pre.Name)
 	}
 	if e.failMsg != "" {
-		fo.op.ErrorMessage, e.failMsg = e.failMsg, ""
+		fo.fail, e.failMsg = e.failMsg, ""
 		fo.apply = nil
 	}
 	e.ops = append(e.ops, fo)
@@ -246,8 +288,9 @@ func (e *Environments) advance(o *fakeOperation) {
 	}
 	now := &bcadmin.Time{Time: time.Now().UTC()}
 	o.op.CompletedOn = now
-	if o.op.ErrorMessage != "" {
+	if o.fail != "" {
 		o.op.Status = bcadmin.OperationStatusFailed
+		o.op.ErrorMessage = o.fail
 		if env, ok := e.envs[o.creates]; ok {
 			env.Status = bcadmin.EnvironmentStatusCreatingFailed
 		}
@@ -330,6 +373,24 @@ func (e *Environments) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	family, name, typ := env.ApplicationFamily, env.Name, env.Type
+	if o := e.pending(family, name); o != nil {
+		if o.op.Type.Is(bcadmin.OperationTypeSoftDelete) || o.op.Type.Is(bcadmin.OperationTypeDelete) {
+			WriteError(w, http.StatusConflict, "tenantDeletionInProgress", "The environment is already being deleted.")
+		} else {
+			WriteError(w, http.StatusConflict, "environmentOperationInProgress", fmt.Sprintf("Another operation is running on environment '%s'.", name))
+		}
+		return
+	}
+	// Environments whose creation or removal failed are deleted permanently.
+	if env.Status.Is(bcadmin.EnvironmentStatusCreatingFailed) || env.Status.Is(bcadmin.EnvironmentStatusRemovingFailed) {
+		e.start(w, bcadmin.OperationTypeDelete, family, name, typ, "", nil, nil,
+			func(e *Environments) { delete(e.envs, envKey(family, name)) })
+		return
+	}
+	if !env.Status.Is(bcadmin.EnvironmentStatusActive) {
+		WriteError(w, http.StatusBadRequest, "invalidStatusCannotDeleteTenant", fmt.Sprintf("Environment '%s' has status %s.", name, env.Status))
+		return
+	}
 	e.start(w, bcadmin.OperationTypeSoftDelete, family, name, typ, "", nil, map[string]any{"deleteReason": "requestedByAdmin"},
 		func(e *Environments) {
 			if stored, ok := e.envs[envKey(family, name)]; ok {
@@ -352,7 +413,7 @@ func (e *Environments) handleCopy(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	src, ok := e.lookup(w, r)
-	if !ok {
+	if !ok || !e.ready(w, src) {
 		return
 	}
 	if e.taken(src.ApplicationFamily, body.EnvironmentName) {
@@ -372,6 +433,10 @@ func (e *Environments) handleRecover(w http.ResponseWriter, r *http.Request) {
 	defer e.mu.Unlock()
 	env, ok := e.lookup(w, r)
 	if !ok {
+		return
+	}
+	if e.pending(env.ApplicationFamily, env.Name) != nil {
+		WriteError(w, http.StatusConflict, "deletedEnvironmentRecoveryInProgress", "An operation is running on the environment.")
 		return
 	}
 	if !env.Status.Is(bcadmin.EnvironmentStatusSoftDeleted) {
@@ -398,7 +463,7 @@ func (e *Environments) handleRename(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	env, ok := e.lookup(w, r)
-	if !ok {
+	if !ok || !e.ready(w, env) {
 		return
 	}
 	family, oldName, newName := env.ApplicationFamily, env.Name, body.NewEnvironmentName
@@ -430,7 +495,7 @@ func (e *Environments) handleRestore(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	src, ok := e.lookup(w, r)
-	if !ok {
+	if !ok || !e.ready(w, src) {
 		return
 	}
 	if e.taken(src.ApplicationFamily, body.EnvironmentName) {
@@ -475,7 +540,7 @@ func (e *Environments) handleEnvOperations(w http.ResponseWriter, r *http.Reques
 	family, name := r.PathValue("family"), r.PathValue("env")
 	out := []bcadmin.Operation{}
 	for _, o := range e.ops {
-		if strings.EqualFold(o.family, family) && strings.EqualFold(o.name, name) {
+		if o.belongsTo(family, name) {
 			e.advance(o)
 			out = append(out, o.op)
 		}
@@ -502,7 +567,7 @@ func (e *Environments) handleGetOperation(w http.ResponseWriter, r *http.Request
 		if !strings.EqualFold(o.op.ID, id) {
 			continue
 		}
-		if family != "" && (!strings.EqualFold(o.family, family) || !strings.EqualFold(o.name, name)) {
+		if family != "" && !o.belongsTo(family, name) {
 			break
 		}
 		e.advance(o)
@@ -531,7 +596,7 @@ func (e *Environments) handleMatch(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	env, ok := e.lookup(w, r)
-	if !ok {
+	if !ok || !e.ready(w, env) {
 		return
 	}
 	if !env.Type.Is(bcadmin.EnvironmentTypeSandbox) {
