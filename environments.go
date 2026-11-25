@@ -223,7 +223,8 @@ func (s *EnvironmentsService) Copy(ctx context.Context, family, source, target s
 }
 
 // Delete deletes an environment and returns a poller for the deletion. Needs
-// API v2.9 or later, which returns the operation. Since
+// API v2.9 or later, which returns the operation. The request is not retried
+// on server errors, because the deletion may already have started. Since
 // API v2.18 the environment is soft deleted and can be recovered for 14 days,
 // unless its status is CreatingFailed or RemovingFailed.
 //
@@ -378,7 +379,9 @@ func (s *EnvironmentsService) MatchProductionConfigurationMetrics(ctx context.Co
 // typical production environment to the sandbox for a limited time (72
 // hours) and returns a poller for the operation. When the period ends, the
 // service returns the sandbox to its configuration automatically. Needs API
-// v2.9 or later.
+// v2.9 or later. If it fails with the error code
+// "productionConfigurationOutcomeUnknown", check the environment's
+// operations (see [EnvironmentsService.Operations]) before trying again.
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/matchProductionConfiguration.
 func (s *EnvironmentsService) MatchProductionConfiguration(ctx context.Context, family, name string) (*Poller[*Operation], error) {
@@ -537,7 +540,7 @@ func (s *EnvironmentsService) environmentResult(family, name string) func(contex
 		timer := time.NewTimer(freq)
 		defer timer.Stop()
 		for !env.Status.Is(EnvironmentStatusActive) {
-			if env.Status.Failed() {
+			if env.Status.Failed() || !env.Status.canBecomeActive() {
 				return env, fmt.Errorf("bcadmin: environment %s has status %s", clean(env.Name), clean(string(env.Status)))
 			}
 			timer.Reset(freq)

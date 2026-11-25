@@ -61,8 +61,8 @@ type ClientOptions struct {
 	azcore.ClientOptions
 
 	// RetryNonIdempotent allows retrying POST and PATCH requests, PUT
-	// requests that create resources, and requests sent with Client.Do other
-	// than GET, HEAD and OPTIONS like GET requests: on every status code
+	// requests that create resources, environment deletes, and requests sent
+	// with Client.Do other than GET, HEAD and OPTIONS like GET requests: on every status code
 	// in Retry.StatusCodes and on transport errors that azcore retries. By default they are only
 	// retried on 429, on 503 with a Retry-After header, and when the connection
 	// could not be established, because the service may already have started

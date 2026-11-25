@@ -325,6 +325,21 @@ func TestWaitUntilEnvironmentActiveFails(t *testing.T) {
 	}
 }
 
+func TestWaitUntilActiveStopsOnDeletedEnvironment(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "applications/{family}/environments/{env}/recover", http.StatusAccepted, map[string]any{"id": "op-7", "status": "succeeded"})
+	srv.HandleJSON(http.MethodGet, "applications/{family}/environments/{env}", http.StatusOK, map[string]any{"name": "uat", "status": "SoftDeleted"})
+	p, err := srv.NewClient(t).Environments().Recover(context.Background(), bc, "uat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Wait(context.Background(), &bcadmin.WaitOptions{UntilEnvironmentActive: true})
+	if err == nil || !strings.Contains(err.Error(), "SoftDeleted") {
+		t.Errorf("Wait() error = %v", err)
+	}
+}
+
 func TestEnvironmentOperationsBeforeV228(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.27"))

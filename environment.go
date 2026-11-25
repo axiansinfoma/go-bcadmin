@@ -30,6 +30,13 @@ func (s EnvironmentStatus) Is(other EnvironmentStatus) bool {
 	return strings.EqualFold(string(s), string(other))
 }
 
+// canBecomeActive reports whether an environment with status s can become
+// Active without another operation; it cannot while it is being removed or
+// is deleted.
+func (s EnvironmentStatus) canBecomeActive() bool {
+	return !s.Is(EnvironmentStatusRemoving) && !s.Is(EnvironmentStatusSoftDeleting) && !s.Is(EnvironmentStatusSoftDeleted)
+}
+
 // Failed reports whether s is one of the failed statuses (CreatingFailed,
 // RemovingFailed, SoftDeletingFailed, RecoveringFailed).
 func (s EnvironmentStatus) Failed() bool {

@@ -100,6 +100,9 @@ func TestEnvironmentsFakeConflictsAndCopies(t *testing.T) {
 	if _, err := envs.Create(ctx, fam, "c", opts); !bcadmin.IsConflict(err) {
 		t.Errorf("second create while the first is pending: %v", err)
 	}
+	if _, err := envs.Create(ctx, fam, "d", opts); bcadmin.ErrorCode(err) != "tenantAlreadyProvisioning" {
+		t.Errorf("create while another create is pending: %v", err)
+	}
 	if _, err := c.Environments().Operations(ctx, fam, "missing"); !bcadmin.IsNotFound(err) {
 		t.Errorf("operations of a missing environment: %v", err)
 	}
@@ -210,5 +213,16 @@ func TestEnvironmentsFakeValidationAndMatchState(t *testing.T) {
 	}
 	if _, err := c.Environments().MatchProductionConfiguration(ctx, fam, "sb"); bcadmin.ErrorCode(err) != "productionConfigurationAlreadyActive" {
 		t.Errorf("second match: %v", err)
+	}
+}
+
+func TestEnvironmentsFakeMatchOnInactiveSandbox(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	fake := srv.EnableEnvironments()
+	fake.Add(bcadmin.Environment{Name: "sb", Type: bcadmin.EnvironmentTypeSandbox, Status: bcadmin.EnvironmentStatusSoftDeleted})
+	_, err := srv.NewClient(t).Environments().MatchProductionConfiguration(context.Background(), bcadmin.FamilyBusinessCentral, "sb")
+	if bcadmin.ErrorCode(err) != "productionConfigurationNotEligible" {
+		t.Errorf("error = %v", err)
 	}
 }

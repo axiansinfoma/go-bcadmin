@@ -23,7 +23,9 @@ type WaitOptions struct {
 	// UntilEnvironmentActive makes Wait, for pollers whose result is an
 	// environment (create, copy, recover, rename, restore), keep polling the
 	// environment after the operation succeeded until its status is Active.
-	// It fails when the environment reaches a failed status. Pollers of other
+	// It fails when the environment reaches a failed status or a status
+	// from which it cannot become Active (Removing, SoftDeleting,
+	// SoftDeleted). Pollers of other
 	// operations ignore it. The environment may stay in a non-final status
 	// for a long time, so give the context a deadline.
 	UntilEnvironmentActive bool

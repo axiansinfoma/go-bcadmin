@@ -21,7 +21,8 @@ import (
 // (create, copy, restore) appear right away with status Preparing, and get
 // status Active when the operation succeeds or CreatingFailed when it fails.
 // Like the service, the fake refuses operations on environments that are
-// busy with another operation or not Active; where the documentation names
+// busy with another operation or not Active, and a second create or copy
+// while one is running (tenantAlreadyProvisioning); where the documentation names
 // no error code for that, it uses "environmentOperationInProgress" (409) and
 // "invalidEnvironmentStatus" (400). Deleting a CreatingFailed or
 // RemovingFailed environment removes it permanently (operation type
@@ -56,8 +57,10 @@ type fakeOperation struct {
 }
 
 // EnableEnvironments registers handlers for the environment, environment
-// operation and tenant operation endpoints and returns the store behind
-// them. Do not register handlers for these paths yourself afterwards.
+// operation and tenant operation endpoints (including GET
+// environments/operations) and returns the store behind them. Call it once
+// per server and do not register handlers for these paths yourself, before
+// or after; http.ServeMux panics on conflicting patterns.
 func (s *Server) EnableEnvironments() *Environments {
 	e := &Environments{envs: map[string]*bcadmin.Environment{}, polls: 1, matchActive: map[string]bool{}}
 	const env = "applications/{family}/environments/{env}"
@@ -93,7 +96,9 @@ func (e *Environments) SetPollsUntilDone(n int) {
 }
 
 // FailNextOperation makes the next operation that is started end with status
-// Failed and the given error message, without changing any environment.
+// Failed and the given error message. A failing create, copy or restore leaves
+// its target environment with status CreatingFailed; no other environment is
+// changed.
 func (e *Environments) FailNextOperation(message string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -241,6 +246,18 @@ func (e *Environments) ready(w http.ResponseWriter, env *bcadmin.Environment) bo
 	return true
 }
 
+// provisioning reports whether a create or copy operation is running in the
+// tenant; the service allows only one at a time. e.mu must be held.
+func (e *Environments) provisioning(w http.ResponseWriter) bool {
+	for _, o := range e.ops {
+		if !o.op.Status.Terminal() && (o.op.Type.Is(bcadmin.OperationTypeCreate) || o.op.Type.Is(bcadmin.OperationTypeCopy)) {
+			WriteError(w, http.StatusConflict, "tenantAlreadyProvisioning", "Another environment is currently being created.")
+			return true
+		}
+	}
+	return false
+}
+
 // conflict writes the error for a name that is taken. e.mu must be held.
 func conflict(w http.ResponseWriter, name string) {
 	WriteError(w, http.StatusConflict, "resourceExists", fmt.Sprintf("An environment named '%s' already exists.", name))
@@ -364,6 +381,9 @@ func (e *Environments) handleCreate(w http.ResponseWriter, r *http.Request) {
 		conflict(w, name)
 		return
 	}
+	if e.provisioning(w) {
+		return
+	}
 	newEnv := bcadmin.Environment{
 		Name: name, ApplicationFamily: family, Type: body.EnvironmentType, CountryCode: body.CountryCode,
 		RingName: body.RingName, VersionDetails: &bcadmin.VersionDetails{Version: body.ApplicationVersion},
@@ -430,6 +450,9 @@ func (e *Environments) handleCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	if e.taken(src.ApplicationFamily, body.EnvironmentName) {
 		conflict(w, body.EnvironmentName)
+		return
+	}
+	if e.provisioning(w) {
 		return
 	}
 	copied := *src
@@ -623,10 +646,14 @@ func (e *Environments) handleMatch(w http.ResponseWriter, r *http.Request) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	env, ok := e.lookup(w, r)
-	if !ok || !e.ready(w, env) {
+	if !ok {
 		return
 	}
-	if !env.Type.Is(bcadmin.EnvironmentTypeSandbox) {
+	if e.pending(env.ApplicationFamily, env.Name) != nil {
+		WriteError(w, http.StatusConflict, "environmentOperationInProgress", fmt.Sprintf("Another operation is running on environment '%s'.", env.Name))
+		return
+	}
+	if !env.Type.Is(bcadmin.EnvironmentTypeSandbox) || !env.Status.Is(bcadmin.EnvironmentStatusActive) {
 		WriteError(w, http.StatusBadRequest, "productionConfigurationNotEligible", "The environment isn't an active sandbox.")
 		return
 	}
