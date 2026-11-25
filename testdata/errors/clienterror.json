@@ -1,0 +1,18 @@
+{
+  "code": "InvalidInput",
+  "message": "One or more values are invalid.",
+  "extensionData": {
+    "environmentName": "mysandbox"
+  },
+  "clientError": [
+    {
+      "code": "InvalidCountryCode",
+      "message": "Country code 'XX' is not supported",
+      "target": "countryCode"
+    },
+    {
+      "code": "InvalidRing",
+      "message": "Ring 'FOO' does not exist"
+    }
+  ]
+}

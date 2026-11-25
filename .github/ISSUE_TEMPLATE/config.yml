@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Business Central Admin Center API documentation
+    url: https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/administration/administration-center-api
+    about: Official Microsoft documentation of the API this module wraps.
+  - name: Report a security vulnerability
+    url: https://github.com/axiansinfoma/go-bcadmin/security/advisories/new
+    about: Please report security problems privately, not as an issue.

@@ -1,0 +1,42 @@
+{
+  "value": [
+    {
+      "id": "00000000-0000-0000-0000-000000000010",
+      "type": "copy",
+      "status": "succeeded",
+      "aadTenantId": "00000000-0000-0000-0000-000000000001",
+      "createdOn": "2026-05-04T09:12:00.000Z",
+      "startedOn": "2026-05-04T09:12:30.000Z",
+      "completedOn": "2026-05-04T09:40:00.000Z",
+      "createdBy": "admin@contoso.com",
+      "creatorPrincipalType": "User",
+      "errorMessage": "",
+      "parameters": {
+        "sourceEnvironmentName": "Production",
+        "destinationEnvironmentName": "mysandbox",
+        "destinationEnvironmentType": "Sandbox"
+      },
+      "environmentName": "Production",
+      "environmentType": "Production",
+      "productFamily": "BusinessCentral"
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000011",
+      "type": "environmentAppInstall",
+      "status": "Running",
+      "aadTenantId": "00000000-0000-0000-0000-000000000001",
+      "createdOn": "2026-05-05T08:00:00.000Z",
+      "errorMessage": "",
+      "parameters": {
+        "appId": "00000000-0000-0000-0000-000000000002",
+        "targetAppVersion": "2.0.0.0",
+        "countryCode": "US",
+        "allowPreviewVersion": false,
+        "acceptIsvEula": true
+      },
+      "environmentName": "mysandbox",
+      "environmentType": "Sandbox",
+      "productFamily": "BusinessCentral"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in go-bcadmin does not work as documented.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Module version
+      description: The go-bcadmin version or commit, from go.mod.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: api-version
+    attributes:
+      label: Admin Center API version
+      description: ClientOptions.APIVersion, or "default".
+      placeholder: default
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the error message. Remove tenant IDs, environment names and tokens.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: A small program, ideally using the bcadmintest fake server.
+      render: go

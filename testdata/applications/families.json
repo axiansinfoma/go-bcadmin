@@ -1,0 +1,22 @@
+{
+  "value": [
+    {
+      "applicationFamily": "BusinessCentral",
+      "countriesRingDetails": [
+        {
+          "countryCode": "US",
+          "rings": [
+            { "name": "PROD", "productionRing": true, "friendlyName": "Production" }
+          ]
+        },
+        {
+          "countryCode": "DE",
+          "rings": [
+            { "name": "PROD", "productionRing": true, "friendlyName": "Production" },
+            { "name": "PREVIEW", "productionRing": false, "friendlyName": "Preview" }
+          ]
+        }
+      ]
+    }
+  ]
+}

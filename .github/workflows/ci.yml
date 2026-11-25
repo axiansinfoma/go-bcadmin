@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # The same shell on Linux and Windows runners.
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # renovate: datasource=github-releases depName=golangci/golangci-lint
+  GOLANGCI_LINT_VERSION: "v2.15.0"
+  # renovate: datasource=go depName=golang.org/x/vuln
+  GOVULNCHECK_VERSION: "v1.10.0"
+  # renovate: datasource=go depName=github.com/zricethezav/gitleaks/v8
+  GITLEAKS_VERSION: "v8.30.1"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+      - name: go mod tidy
+        run: go mod tidy -diff
+      - name: go mod verify
+        run: go mod verify
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+  test:
+    name: Test (Go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The two supported Go releases. The go directive in go.mod is the
+        # oldest of them.
+        go: [oldstable, stable]
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ matrix.go }}
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Fuzz (smoke)
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        run: |
+          go test -run='^$' -fuzz=FuzzResponseErrorDecode -fuzztime=15s .
+          go test -run='^$' -fuzz=FuzzBuild -fuzztime=15s ./internal/pathutil
+      - name: Coverage summary
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        run: |
+          {
+            echo '### Coverage'
+            echo '```'
+            go tool cover -func=coverage.out | tail -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+      - name: govulncheck
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      # go install verifies the module against the Go checksum database.
+      - name: Install gitleaks
+        run: go install "github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}"
+      - name: gitleaks
+        run: '"$(go env GOPATH)/bin/gitleaks" git --redact --verbose --exit-code 1 .'
+
+  apicompat:
+    name: API compatibility
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # Informational until v1.0.0: reports incompatible API changes and the
+    # suggested next version without failing the build.
+    continue-on-error: true
+    env:
+      # renovate: datasource=go depName=golang.org/x/exp
+      GORELEASE_VERSION: "v0.0.0-20261124000051-d6646c509b6d"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+      - name: gorelease
+        run: |
+          base="$(git tag --list 'v*' --sort=-version:refname | head -n 1)"
+          go install "golang.org/x/exp/cmd/gorelease@${GORELEASE_VERSION}"
+          if [ -z "$base" ]; then
+            echo "No release tag yet; comparing against an empty module." | tee -a "$GITHUB_STEP_SUMMARY"
+            base=none
+          fi
+          {
+            echo "### gorelease (base: $base)"
+            echo '```'
+            "$(go env GOPATH)/bin/gorelease" -base="$base" 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

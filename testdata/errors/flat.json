@@ -1,0 +1,5 @@
+{
+  "code": "EnvironmentNameInvalid",
+  "message": "The environment name 'x y' is invalid. Names can contain only letters, digits and dashes.",
+  "target": "environmentName"
+}
