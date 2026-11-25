@@ -152,7 +152,8 @@ func (e *Environment) Recover(ctx context.Context) (*Poller[*Environment], error
 	return s.Recover(ctx, e.ApplicationFamily, e.Name)
 }
 
-// Rename renames the environment. See [EnvironmentsService.Rename].
+// Rename renames the environment. See [EnvironmentsService.Rename]. e keeps
+// the old name; use the environment returned by the poller afterwards.
 func (e *Environment) Rename(ctx context.Context, newName string) (*Poller[*Environment], error) {
 	s, err := e.service()
 	if err != nil {

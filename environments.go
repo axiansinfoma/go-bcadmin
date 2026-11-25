@@ -7,7 +7,6 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -118,6 +117,17 @@ func (s *EnvironmentsService) All(ctx context.Context, family string) iter.Seq2[
 				yield(nil, err)
 				return
 			}
+			// Bound methods use the family of the entry; with a family
+			// requested, it must be that one.
+			if family != "" {
+				if env.ApplicationFamily == "" {
+					env.ApplicationFamily = family
+				} else if !asciiEqualFold(env.ApplicationFamily, family) {
+					yield(nil, fmt.Errorf("bcadmin: list of family %s contains environment %s of family %s",
+						clean(family), clean(env.Name), clean(env.ApplicationFamily)))
+					return
+				}
+			}
 			if !yield(s.bind(&env), nil) {
 				return
 			}
@@ -142,7 +152,7 @@ func (s *EnvironmentsService) Get(ctx context.Context, family, name string) (*En
 	if len(raw.Value) > 0 {
 		env = raw.Value[0]
 		for _, v := range raw.Value {
-			if strings.EqualFold(v.Name, name) {
+			if asciiEqualFold(v.Name, name) {
 				env = v
 				break
 			}
@@ -150,7 +160,7 @@ func (s *EnvironmentsService) Get(ctx context.Context, family, name string) (*En
 	}
 	// Bound methods (Delete, ...) use the returned name and family, so they
 	// must be the requested ones.
-	if !strings.EqualFold(env.Name, name) || (env.ApplicationFamily != "" && !strings.EqualFold(env.ApplicationFamily, family)) {
+	if !asciiEqualFold(env.Name, name) || (env.ApplicationFamily != "" && !asciiEqualFold(env.ApplicationFamily, family)) {
 		return nil, fmt.Errorf("bcadmin: response for environment %s/%s describes environment %s/%s",
 			clean(family), clean(name), clean(env.ApplicationFamily), clean(env.Name))
 	}
@@ -173,12 +183,13 @@ func (s *EnvironmentsService) Create(ctx context.Context, family, name string, o
 	if opts.Type == "" || opts.CountryCode == "" {
 		return nil, errors.New("bcadmin: CreateEnvironmentOptions.Type and CountryCode are required")
 	}
-	return s.startEnvironmentOperation(withNonIdempotent(ctx), http.MethodPut,
+	return s.startEnvironmentOperation(withNonIdempotent(ctx), minorTrackableCreate, http.MethodPut,
 		"applications/{}/environments/{}", []string{family, name}, opts, family, name)
 }
 
 // Copy copies the environment source to a new environment target of type
-// targetType and returns a poller whose result is the new environment.
+// targetType and returns a poller whose result is the new environment. Needs
+// API v2.9 or later, which returns the operation.
 //
 // POST /applications/{applicationFamily}/environments/{sourceEnvironmentName}/copy.
 func (s *EnvironmentsService) Copy(ctx context.Context, family, source, target string, targetType EnvironmentType) (*Poller[*Environment], error) {
@@ -189,17 +200,18 @@ func (s *EnvironmentsService) Copy(ctx context.Context, family, source, target s
 		EnvironmentName string          `json:"environmentName"`
 		Type            EnvironmentType `json:"type"`
 	}{target, targetType}
-	return s.startEnvironmentOperation(ctx, http.MethodPost,
+	return s.startEnvironmentOperation(ctx, minorTrackableCreate, http.MethodPost,
 		"applications/{}/environments/{}/copy", []string{family, source}, body, family, target)
 }
 
-// Delete deletes an environment and returns a poller for the deletion. Since
+// Delete deletes an environment and returns a poller for the deletion. Needs
+// API v2.9 or later, which returns the operation. Since
 // API v2.18 the environment is soft deleted and can be recovered for 14 days,
 // unless its status is CreatingFailed or RemovingFailed.
 //
 // DELETE /applications/{applicationFamily}/environments/{environmentName}.
 func (s *EnvironmentsService) Delete(ctx context.Context, family, name string) (*Poller[*Operation], error) {
-	op, err := s.startOperation(withNonIdempotent(ctx), http.MethodDelete,
+	op, err := s.startOperation(withNonIdempotent(ctx), minorTrackableCreate, http.MethodDelete,
 		"applications/{}/environments/{}", []string{family, name}, nil)
 	if err != nil {
 		return nil, err
@@ -212,12 +224,13 @@ func (s *EnvironmentsService) Delete(ctx context.Context, family, name string) (
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/recover.
 func (s *EnvironmentsService) Recover(ctx context.Context, family, name string) (*Poller[*Environment], error) {
-	return s.startEnvironmentOperation(ctx, http.MethodPost,
+	return s.startEnvironmentOperation(ctx, minorRecover, http.MethodPost,
 		"applications/{}/environments/{}/recover", []string{family, name}, nil, family, name)
 }
 
 // Rename renames an environment and returns a poller whose result is the
-// renamed environment. Available since API v2.3.
+// renamed environment. The endpoint exists since API v2.3; this client needs
+// v2.6 or later to track the operation.
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/rename.
 func (s *EnvironmentsService) Rename(ctx context.Context, family, name, newName string) (*Poller[*Environment], error) {
@@ -227,13 +240,14 @@ func (s *EnvironmentsService) Rename(ctx context.Context, family, name, newName 
 	body := struct {
 		NewEnvironmentName string `json:"NewEnvironmentName"`
 	}{newName}
-	return s.startEnvironmentOperation(ctx, http.MethodPost,
+	return s.startEnvironmentOperation(ctx, minorTrackableOperations, http.MethodPost,
 		"applications/{}/environments/{}/rename", []string{family, name}, body, family, newName)
 }
 
 // Restore restores the environment name to opts.PointInTime into the new
 // environment opts.EnvironmentName and returns a poller whose result is the
-// new environment. Available since API v2.4.
+// new environment. The endpoint exists since API v2.4; this client needs v2.6
+// or later to track the operation.
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/restore.
 func (s *EnvironmentsService) Restore(ctx context.Context, family, name string, opts RestoreOptions) (*Poller[*Environment], error) {
@@ -245,7 +259,7 @@ func (s *EnvironmentsService) Restore(ctx context.Context, family, name string, 
 		wire
 		PointInTime string `json:"PointInTime"`
 	}{wire(opts), opts.PointInTime.UTC().Format(time.RFC3339)}
-	return s.startEnvironmentOperation(ctx, http.MethodPost,
+	return s.startEnvironmentOperation(ctx, minorTrackableOperations, http.MethodPost,
 		"applications/{}/environments/{}/restore", []string{family, name}, body, family, opts.EnvironmentName)
 }
 
@@ -319,7 +333,7 @@ func (s *EnvironmentsService) MatchProductionConfigurationMetrics(ctx context.Co
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/matchProductionConfiguration.
 func (s *EnvironmentsService) MatchProductionConfiguration(ctx context.Context, family, name string) (*Poller[*Operation], error) {
-	op, err := s.startOperation(ctx, http.MethodPost,
+	op, err := s.startOperation(ctx, minorTrackableCreate, http.MethodPost,
 		"applications/{}/environments/{}/matchProductionConfiguration", []string{family, name}, nil)
 	if err != nil {
 		return nil, err
@@ -360,14 +374,27 @@ func (s *EnvironmentsService) powerPlatform(ctx context.Context, action, family,
 	return s.c.do(ctx, http.MethodPost, u, nil, nil)
 }
 
+// Minimum API versions (v2.x) of the operation-starting endpoints with which
+// the client can track the operation.
+const (
+	// Create, copy and delete return an operation since v2.9; before, they
+	// answer without one.
+	minorTrackableCreate = 9
+	// Rename (v2.3) and restore (v2.4) return an operation, but operations
+	// can only be polled since v2.6.
+	minorTrackableOperations = 6
+	// Recover exists since v2.18.
+	minorRecover = 18
+)
+
 // startOperation sends a request that starts an environment operation and
-// returns the operation from the response.
-func (s *EnvironmentsService) startOperation(ctx context.Context, method, template string, segments []string, body any) (*Operation, error) {
-	// Before v2.9 these endpoints answer without an operation: the request
-	// would be accepted but could not be tracked, and a retry by the caller
-	// would start a second operation.
-	if !s.c.apiVersionAtLeast(2, 9) {
-		return nil, fmt.Errorf("bcadmin: %s %s needs API version v2.9 or later to return a trackable operation, client uses %s", method, template, s.c.apiVersion)
+// returns the operation from the response. It refuses to send the request
+// when the client's API version is older than v2.minMinor, because the
+// request would be accepted but could not be tracked, and a retry by the
+// caller would start a second operation.
+func (s *EnvironmentsService) startOperation(ctx context.Context, minMinor int, method, template string, segments []string, body any) (*Operation, error) {
+	if !s.c.apiVersionAtLeast(2, minMinor) {
+		return nil, fmt.Errorf("bcadmin: %s %s needs API version v2.%d or later to track the operation, client uses %s", method, template, minMinor, s.c.apiVersion)
 	}
 	var op Operation
 	if err := s.c.call(ctx, method, template, segments, body, &op); err != nil {
@@ -381,8 +408,8 @@ func (s *EnvironmentsService) startOperation(ctx context.Context, method, templa
 
 // startEnvironmentOperation starts an operation whose result is the
 // environment family/resultName.
-func (s *EnvironmentsService) startEnvironmentOperation(ctx context.Context, method, template string, segments []string, body any, family, resultName string) (*Poller[*Environment], error) {
-	op, err := s.startOperation(ctx, method, template, segments, body)
+func (s *EnvironmentsService) startEnvironmentOperation(ctx context.Context, minMinor int, method, template string, segments []string, body any, family, resultName string) (*Poller[*Environment], error) {
+	op, err := s.startOperation(ctx, minMinor, method, template, segments, body)
 	if err != nil {
 		return nil, err
 	}
@@ -455,10 +482,13 @@ func (s *EnvironmentsService) environmentResult(family, name string) func(contex
 			timer.Reset(freq)
 			select {
 			case <-ctx.Done():
-				return env, fmt.Errorf("bcadmin: waiting for environment %s to become active: %w", clean(name), ctx.Err())
+				return env, waitError(ctx, "environment "+name+" to become active")
 			case <-timer.C:
 			}
 			if env, err = s.Get(ctx, family, name); err != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					return nil, waitError(ctx, "environment "+name+" to become active")
+				}
 				return nil, err
 			}
 		}

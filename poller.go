@@ -176,9 +176,15 @@ func (p *Poller[T]) pollOnce(ctx context.Context) error {
 // ctxError returns the error for a done ctx. It wraps ctx.Err() and, when it
 // differs, the context's cause.
 func (p *Poller[T]) ctxError(ctx context.Context) error {
+	return waitError(ctx, "operation "+p.op.ID)
+}
+
+// waitError returns the error for a done ctx while waiting for what. It wraps
+// ctx.Err() and, when it differs, the context's cause.
+func waitError(ctx context.Context, what string) error {
 	err, cause := ctx.Err(), context.Cause(ctx)
 	if cause != nil && !errors.Is(cause, err) {
-		return fmt.Errorf("bcadmin: waiting for operation %s: %w (cause: %w)", clean(p.op.ID), err, cause)
+		return fmt.Errorf("bcadmin: waiting for %s: %w (cause: %w)", clean(what), err, cause)
 	}
-	return fmt.Errorf("bcadmin: waiting for operation %s: %w", clean(p.op.ID), err)
+	return fmt.Errorf("bcadmin: waiting for %s: %w", clean(what), err)
 }

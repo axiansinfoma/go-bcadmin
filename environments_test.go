@@ -221,8 +221,8 @@ func TestEnvironmentOperationFails(t *testing.T) {
 	if !ok || !strings.Contains(err.Error(), "The target environment name is already in use.") || oe.Operation.ID != p.ID() {
 		t.Errorf("Wait() error = %v", err)
 	}
-	if _, ok := fake.Get(bc, "sb"); ok {
-		t.Error("failed copy created the environment")
+	if env, ok := fake.Get(bc, "sb"); !ok || !env.Status.Is(bcadmin.EnvironmentStatusCreatingFailed) {
+		t.Errorf("after failed copy: %+v, %v", env, ok)
 	}
 }
 
@@ -479,14 +479,30 @@ func TestPollingBeforeV228FollowsRenameAndDeletedEnvironments(t *testing.T) {
 	fake.Add(bcadmin.Environment{Name: "old", Type: bcadmin.EnvironmentTypeSandbox})
 	fake.SetPollsUntilDone(2)
 	c := srv.NewClient(t)
-	p, err := c.Environments().Rename(context.Background(), bc, "old", "new")
+	ctx := context.Background()
+	p, err := c.Environments().Rename(ctx, bc, "old", "new")
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := p.Wait(context.Background(), nil)
+	// Let the rename finish outside the poller, so "old" is gone when the
+	// poller looks for the operation.
+	if _, err := c.Tenant().Operations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Tenant().Operations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fake.Get(bc, "old"); ok {
+		t.Fatal("rename did not finish")
+	}
+	env, err := p.Wait(ctx, nil)
 	if err != nil || env.Name != "new" {
 		t.Fatalf("rename = %+v, %v", env, err)
 	}
+	// The poller skipped the vanished environment and found the operation
+	// under the new name.
+	findRequest(t, srv, http.MethodGet, "/admin/v2.27/applications/BusinessCentral/environments/old/operations")
+	findRequest(t, srv, http.MethodGet, "/admin/v2.27/applications/BusinessCentral/environments/new/operations")
 
 	// An operation of an environment that no longer exists is found in the
 	// operations of all environments.
@@ -503,6 +519,39 @@ func TestPollingBeforeV228FollowsRenameAndDeletedEnvironments(t *testing.T) {
 	}
 }
 
+func TestWaitUntilActiveKeepsContextCause(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "applications/{family}/environments/{env}/recover", http.StatusAccepted, map[string]any{"id": "op-4", "status": "succeeded"})
+	srv.HandleJSON(http.MethodGet, "applications/{family}/environments/{env}", http.StatusOK, map[string]any{"name": "uat", "status": "Recovering"})
+	p, err := srv.NewClient(t).Environments().Recover(context.Background(), bc, "uat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("shutting down")
+	ctx, cancel := context.WithTimeoutCause(context.Background(), 50*time.Millisecond, cause)
+	defer cancel()
+	_, err = p.Wait(ctx, &bcadmin.WaitOptions{UntilEnvironmentActive: true, Frequency: time.Millisecond})
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, cause) {
+		t.Errorf("Wait() error = %v, want DeadlineExceeded and the cause", err)
+	}
+}
+
+func TestRenameAndRestoreNeedV26(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.5"))
+	envs := srv.NewClient(t).Environments()
+	if _, err := envs.Rename(context.Background(), bc, "a", "b"); err == nil || !strings.Contains(err.Error(), "v2.6") {
+		t.Errorf("rename error = %v", err)
+	}
+	if _, err := envs.Restore(context.Background(), bc, "a", bcadmin.RestoreOptions{EnvironmentName: "b", EnvironmentType: "Sandbox", PointInTime: time.Now()}); err == nil || !strings.Contains(err.Error(), "v2.6") {
+		t.Errorf("restore error = %v", err)
+	}
+	if n := len(srv.Requests()); n != 0 {
+		t.Errorf("requests = %d, want 0", n)
+	}
+}
+
 func TestOperationsNeedV29(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.8"))
@@ -516,6 +565,29 @@ func TestOperationsNeedV29(t *testing.T) {
 	}
 }
 
+func TestEnvironmentListChecksFamily(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "applications/{family}/environments", http.StatusOK, map[string]any{"value": []map[string]any{
+		{"name": "no-family"}, {"name": "other", "applicationFamily": "Other"},
+	}})
+	var got []*bcadmin.Environment
+	var err error
+	for env, e := range srv.NewClient(t).Environments().All(context.Background(), bc) {
+		if e != nil {
+			err = e
+			break
+		}
+		got = append(got, env)
+	}
+	if len(got) != 1 || got[0].ApplicationFamily != bc {
+		t.Errorf("environments = %+v", got)
+	}
+	if err == nil || !strings.Contains(err.Error(), "of family Other") {
+		t.Errorf("error = %v", err)
+	}
+}
+
 func TestEnvironmentGetRejectsOtherEnvironment(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t)
@@ -523,5 +595,10 @@ func TestEnvironmentGetRejectsOtherEnvironment(t *testing.T) {
 	_, err := srv.NewClient(t).Environments().Get(context.Background(), bc, "uat")
 	if err == nil || !strings.Contains(err.Error(), "describes environment") {
 		t.Errorf("error = %v", err)
+	}
+	// Unicode case folding must not match: U+212A KELVIN SIGN folds to "k".
+	srv.HandleJSON(http.MethodGet, "applications/{family}/environments/kelvin", http.StatusOK, map[string]any{"name": "\u212aelvin", "applicationFamily": bc})
+	if _, err := srv.NewClient(t).Environments().Get(context.Background(), bc, "kelvin"); err == nil {
+		t.Error("Unicode-folded name was accepted")
 	}
 }

@@ -93,6 +93,9 @@ func TestEnvironmentsFakeConflictsAndCopies(t *testing.T) {
 	if _, err := envs.Create(ctx, fam, "c", opts); err != nil {
 		t.Fatal(err)
 	}
+	if pending, ok := fake.Get(fam, "c"); !ok || !pending.Status.Is(bcadmin.EnvironmentStatusPreparing) {
+		t.Errorf("environment during create = %+v, %v", pending, ok)
+	}
 	if _, err := envs.Create(ctx, fam, "c", opts); !bcadmin.IsConflict(err) {
 		t.Errorf("second create while the first is pending: %v", err)
 	}
@@ -100,6 +103,12 @@ func TestEnvironmentsFakeConflictsAndCopies(t *testing.T) {
 		t.Errorf("operations of a missing environment: %v", err)
 	}
 
+	if ops := fake.Operations(); len(ops) > 0 && ops[0].Parameters != nil {
+		ops[0].Parameters["countryCode"] = "XX"
+		if fake.Operations()[0].Parameters["countryCode"] == "XX" {
+			t.Error("Operations does not return deep copies")
+		}
+	}
 	got, _ := fake.Get(fam, "a")
 	got.VersionDetails.Version = "changed"
 	again, _ := fake.Get(fam, "a")

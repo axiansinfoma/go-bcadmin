@@ -110,7 +110,8 @@ make check    # tidy, lint, test, vuln
   name changes. Older API versions search the operation lists of the
   environment in the request path and of the result environment, then the
   operations of all environments (v2.7). Operation-starting environment
-  endpoints refuse API versions before v2.9, which return no operation.
+  methods refuse API versions in which the operation cannot be tracked
+  (`minorTrackable*` constants in environments.go).
 - `Get environment` is documented as wrapped in `{"value": [...]}`, but the
   service returns the object; `EnvironmentsService.Get` accepts both.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no

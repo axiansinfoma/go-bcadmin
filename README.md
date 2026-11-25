@@ -108,8 +108,10 @@ deletePoller, err := env.Delete(ctx)
 
 `Create` and `Delete` are not retried on server errors, because the operation
 may already have started; check the environment or its operations before trying
-again. The methods that start environment operations need API version v2.9 or
-later, which return the operation to track.
+again. The methods that start environment operations refuse API versions in
+which the operation cannot be tracked (before v2.9 for create, copy and delete;
+before v2.6 for rename and restore), instead of starting an operation the
+client cannot follow.
 
 ## Long-running operations
 
@@ -238,12 +240,12 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Environments | `POST .../environments/{name}/copy` | `Environments().Copy`, `Environment.Copy` | v2.9 | ✅ |
 | Environments | `DELETE .../environments/{name}` | `Environments().Delete`, `Environment.Delete` | v2.9 | ✅ |
 | Environments | `POST .../environments/{name}/recover` | `Environments().Recover`, `Environment.Recover` | v2.18 | ✅ |
-| Environments | `POST .../environments/{name}/rename` | `Environments().Rename`, `Environment.Rename` | v2.3 | ✅ |
-| Environments | `POST .../environments/{name}/restore` | `Environments().Restore`, `Environment.Restore` | v2.4 | ✅ |
+| Environments | `POST .../environments/{name}/rename` | `Environments().Rename`, `Environment.Rename` | v2.6 (endpoint v2.3) | ✅ |
+| Environments | `POST .../environments/{name}/restore` | `Environments().Restore`, `Environment.Restore` | v2.6 (endpoint v2.4) | ✅ |
 | Environments | `GET .../environments/{name}/availableRestorePeriods` | `Environments().RestorePeriods` | v2.4 | ✅ |
 | Environments | `GET .../environments/{name}/usedstorage` | `Environments().UsedStorage` | | ✅ |
 | Environments | `GET .../environments/{name}/operations[/{id}]` | `Environments().Operations`, `GetOperation` (v2.28), `ResumeOperation` | v2.6 | ✅ |
-| Environments | `GET/POST .../environments/{name}/matchProductionConfiguration[/metrics]` | `Environments().MatchProductionConfiguration`, `MatchProductionConfigurationMetrics` | | ✅ |
+| Environments | `GET/POST .../environments/{name}/matchProductionConfiguration[/metrics]` | `Environments().MatchProductionConfiguration`, `MatchProductionConfigurationMetrics` | v2.9 | ✅ |
 | Environments | `POST bap/.../environments/{name}/linkEnvironment`, `unlinkEnvironment` | `Environments().LinkPowerPlatform`, `UnlinkPowerPlatform` (delegated auth only) | v2.21 | ✅ |
 | Apps | list, available updates, install, update, cancel update, uninstall, uninstall requirements, operations, per-tenant extension upload, scheduled per-tenant extension operations | | | 🚧 |
 | Updates | list, select/schedule, cancel | | | 🚧 |
