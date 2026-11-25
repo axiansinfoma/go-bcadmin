@@ -19,7 +19,7 @@ test: ## Run the tests with the race detector.
 
 .PHONY: cover
 cover: ## Run the tests and write coverage.html.
-	go test -coverprofile=coverage.out ./...
+	go test -coverpkg=./... -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 	go tool cover -func=coverage.out | tail -n 1
 

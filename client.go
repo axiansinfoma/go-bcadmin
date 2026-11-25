@@ -177,6 +177,16 @@ func NewClient(cred azcore.TokenCredential, options *ClientOptions) (*Client, er
 	}, nil
 }
 
+// apiVersionAtLeast reports whether the client's API version is at least
+// major.minor.
+func (c *Client) apiVersionAtLeast(major, minor int) bool {
+	var ma, mi int
+	if _, err := fmt.Sscanf(c.apiVersion, "v%d.%d", &ma, &mi); err != nil {
+		return false
+	}
+	return ma > major || (ma == major && mi >= minor)
+}
+
 // APIVersion returns the Admin Center API version the client uses, for
 // example "v2.29".
 func (c *Client) APIVersion() string { return c.apiVersion }

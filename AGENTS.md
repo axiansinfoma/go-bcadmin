@@ -13,9 +13,11 @@ Business Central Administration Center API. Read README.md for the user view.
 | `request.go` | `Do`, path building, request sending, error mapping, retry rules for POST/PATCH, `@odata.nextLink` pagination (`list`, `listAll`). |
 | `errors.go` | `ResponseError` (API error body pass-through), sentinels, `OperationError`. |
 | `operation.go`, `poller.go` | `Operation`, statuses and types; generic `Poller[T]`. |
-| `tenant.go`, `applications.go`, ... | One file per API area with its types and service. |
+| `tenant.go`, `applications.go`, `environments.go`, ... | One file per API area with its types and service. |
+| `environment.go` | The `Environment` object; its methods delegate to `EnvironmentsService`. |
+| `time.go` | `Time`, a tolerant timestamp type; use `*Time` for all timestamps in responses. |
 | `version.go` | `DefaultAPIVersion`; module version for the User-Agent from build info. |
-| `bcadmintest/` | Public fake API server for tests (ours and users'). |
+| `bcadmintest/` | Public fake API server for tests (ours and users'); `environments.go` is a stateful fake of the environment endpoints. |
 | `internal/pathutil/` | Path segment validation and escaping. |
 | `testdata/` | JSON fixtures, based on the samples in the Microsoft Learn docs. |
 
@@ -103,6 +105,12 @@ make check    # tidy, lint, test, vuln
   behavior).
 - azcore treats `RetryDelay: -1` as zero delay and its overflow check then uses
   the maximum delay; tests should use small positive delays.
+- Environment operations are polled with `GET environments/operations/{id}`
+  (v2.28+), because rename and restore responses lack the environment and the
+  name changes. Older API versions search the operation list of the
+  environment in the request path.
+- `Get environment` is documented as wrapped in `{"value": [...]}`, but the
+  service returns the object; `EnvironmentsService.Get` accepts both.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no
   tags); check that Renovate proposes updates for it, otherwise bump it by
   hand.

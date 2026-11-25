@@ -88,6 +88,28 @@ func main() {
 }
 ```
 
+## Environments
+
+```go
+envs := client.Environments()
+
+// Create a sandbox and wait until it is active.
+poller, err := envs.Create(ctx, bcadmin.FamilyBusinessCentral, "uat", bcadmin.CreateEnvironmentOptions{
+	Type:        bcadmin.EnvironmentTypeSandbox,
+	CountryCode: "DE",
+})
+if err != nil { /* *bcadmin.ResponseError, e.g. code "resourceExists" */ }
+env, err := poller.Wait(ctx, &bcadmin.WaitOptions{UntilEnvironmentActive: true})
+
+// Environments returned by the client have methods.
+copyPoller, err := env.Copy(ctx, "uat-copy", bcadmin.EnvironmentTypeSandbox)
+deletePoller, err := env.Delete(ctx)
+```
+
+`Create` and `Delete` are not retried on server errors, because the operation
+may already have started; check the environment or its operations before trying
+again.
+
 ## Long-running operations
 
 Calls that start an operation return a `*bcadmin.Poller[T]`:
@@ -180,6 +202,14 @@ package provides a fake Admin Center API server:
 
 ```go
 srv := bcadmintest.NewServer(t)
+
+// A stateful fake of the environment endpoints: operations finish after a
+// number of polls and change the stored environments.
+envs := srv.EnableEnvironments()
+envs.Add(bcadmin.Environment{Name: "Production", Type: bcadmin.EnvironmentTypeProduction})
+envs.FailNextOperation("simulated failure")
+
+// Or handlers for single endpoints.
 srv.HandleJSON(http.MethodGet, "environments/quotas", http.StatusOK, map[string]any{
 	"environmentsCount": map[string]int{"production": 1, "sandbox": 3},
 })
@@ -201,7 +231,19 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Tenant | `GET environments/operations/{id}` | `Tenant().GetOperation`, `Tenant().ResumeOperation` | v2.28 | ✅ |
 | Available applications | `GET applications/` | `Applications().Families` | | ✅ |
 | Available applications | `GET applications/{family}/Countries/{country}/Rings/{ring}` | `Applications().Versions` | | ✅ |
-| Environments | list, get, create, copy, delete, recover, rename, restore, restore periods, used storage, operations, match production configuration, Power Platform link/unlink | | | 🚧 |
+| Environments | `GET applications/environments`, `GET applications/{family}/environments` | `Environments().List`, `Environments().All` | | ✅ |
+| Environments | `GET applications/{family}/environments/{name}` | `Environments().Get`, `Environment.Refresh` | | ✅ |
+| Environments | `PUT applications/{family}/environments/{name}` | `Environments().Create` | v2.9 | ✅ |
+| Environments | `POST .../environments/{name}/copy` | `Environments().Copy`, `Environment.Copy` | v2.9 | ✅ |
+| Environments | `DELETE .../environments/{name}` | `Environments().Delete`, `Environment.Delete` | v2.9 | ✅ |
+| Environments | `POST .../environments/{name}/recover` | `Environments().Recover`, `Environment.Recover` | v2.18 | ✅ |
+| Environments | `POST .../environments/{name}/rename` | `Environments().Rename`, `Environment.Rename` | v2.3 | ✅ |
+| Environments | `POST .../environments/{name}/restore` | `Environments().Restore`, `Environment.Restore` | v2.4 | ✅ |
+| Environments | `GET .../environments/{name}/availableRestorePeriods` | `Environments().RestorePeriods` | v2.4 | ✅ |
+| Environments | `GET .../environments/{name}/usedstorage` | `Environments().UsedStorage` | | ✅ |
+| Environments | `GET .../environments/{name}/operations[/{id}]` | `Environments().Operations`, `GetOperation` (v2.28), `ResumeOperation` | v2.6 | ✅ |
+| Environments | `GET/POST .../environments/{name}/matchProductionConfiguration[/metrics]` | `Environments().MatchProductionConfiguration`, `MatchProductionConfigurationMetrics` | | ✅ |
+| Environments | `POST bap/.../environments/{name}/linkEnvironment`, `unlinkEnvironment` | `Environments().LinkPowerPlatform`, `UnlinkPowerPlatform` (delegated auth only) | v2.21 | ✅ |
 | Apps | list, available updates, install, update, cancel update, uninstall, uninstall requirements, operations, per-tenant extension upload, scheduled per-tenant extension operations | | | 🚧 |
 | Updates | list, select/schedule, cancel | | | 🚧 |
 | Settings | update window, time zones, Application Insights, security group, partner access, Microsoft 365 licenses, AppSource update cadence | | | 🚧 |

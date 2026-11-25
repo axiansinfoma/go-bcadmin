@@ -1,0 +1,22 @@
+{
+  "id": "00000000-0000-0000-0000-000000000020",
+  "type": "create",
+  "status": "scheduled",
+  "aadTenantId": "",
+  "createdOn": "2021-09-27T08:13:46.65Z",
+  "startedOn": "2021-09-27T08:13:47.3Z",
+  "completedOn": "2021-09-27T08:15:02.073Z",
+  "createdBy": "",
+  "errorMessage": "",
+  "parameters": {
+    "sourceEnvironmentName": "",
+    "sourceEnvironmentType": "",
+    "destinationEnvironmentName": "NewEnvironment",
+    "destinationEnvironmentType": "Production",
+    "applicationVersion": "19.0.28719.0",
+    "countryCode": "US"
+  },
+  "environmentName": "NewEnvironment",
+  "environmentType": "Production",
+  "productFamily": "BusinessCentral"
+}

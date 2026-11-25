@@ -1,0 +1,14 @@
+{
+  "value": [
+    {
+      "from": "2021-01-25T14:57:04.967Z",
+      "to": "2021-01-25T21:06:17.737Z",
+      "correspondingApplicationPackageVersion": "21.4.0.0"
+    },
+    {
+      "from": "2021-01-25T21:14:48Z",
+      "to": "2021-01-27T14:33:15.0007416Z",
+      "correspondingApplicationPackageVersion": "21.5.0.0"
+    }
+  ]
+}

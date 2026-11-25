@@ -19,6 +19,13 @@ type WaitOptions struct {
 	// scheduled operation has run (which can take until the next update
 	// window or update).
 	TreatScheduledAsDone bool
+
+	// UntilEnvironmentActive makes Wait, for pollers whose result is an
+	// environment (create, copy, recover, rename, restore), keep polling the
+	// environment after the operation succeeded until its status is Active.
+	// It fails when the environment reaches a failed status. Pollers of other
+	// operations ignore it.
+	UntilEnvironmentActive bool
 }
 
 // Poller tracks a long-running operation. T is the type of the result, for
