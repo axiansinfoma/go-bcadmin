@@ -2,12 +2,15 @@ package multipartbody
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestBody(t *testing.T) {
@@ -164,4 +167,65 @@ func TestBodyReaders(t *testing.T) {
 			wg.Wait()
 		})
 	}
+}
+
+// TestBodyClose checks that Close waits for a read in progress and that
+// reads after Close fail without touching the file.
+func TestBodyClose(t *testing.T) {
+	t.Parallel()
+	f := &blockingFile{Reader: bytes.NewReader([]byte("abcdef")), entered: make(chan struct{}), release: make(chan struct{})}
+	b, err := New(nil, "f", "x.app", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := b.NewReader()
+	// Read the multipart head, then block inside the file read.
+	head := make([]byte, b.sizes[0])
+	if _, err := io.ReadFull(r, head); err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(r)
+		readDone <- err
+	}()
+	<-f.entered
+	closed := make(chan struct{})
+	go func() {
+		_ = b.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a file read was in progress")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(f.release)
+	<-closed
+	if err := <-readDone; !errors.Is(err, ErrClosed) {
+		t.Errorf("read after Close: %v, want ErrClosed", err)
+	}
+	before := f.calls.Load()
+	if _, err := b.NewReader().Read(make([]byte, 10)); !errors.Is(err, ErrClosed) {
+		t.Errorf("new reader after Close: %v, want ErrClosed", err)
+	}
+	if f.calls.Load() != before {
+		t.Error("the file was read after Close")
+	}
+}
+
+// blockingFile blocks its first ReadAt until release is closed.
+type blockingFile struct {
+	*bytes.Reader
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *blockingFile) ReadAt(p []byte, off int64) (int, error) {
+	if f.calls.Add(1) == 1 {
+		close(f.entered)
+		<-f.release
+	}
+	return f.Reader.ReadAt(p, off)
 }

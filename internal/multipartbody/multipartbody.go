@@ -27,13 +27,21 @@ type Field struct {
 	Value string
 }
 
-// Body is a seekable multipart body. Close does not close the file. Body
-// itself has one offset and is not safe for concurrent use; readers from
-// [Body.NewReader] are independent of it and of each other.
+// ErrClosed is returned by reads after [Body.Close].
+var ErrClosed = errors.New("multipartbody: body closed")
+
+// Body is a seekable multipart body. Body itself has one offset and is not
+// safe for concurrent use; readers from [Body.NewReader] are independent of
+// it and of each other. [Body.Close] ends all reads of the file.
 type Body struct {
-	parts []io.ReaderAt
-	sizes []int64
-	size  int64
+	// mu is held for reading during every read of a part, and for writing
+	// by Close.
+	mu       sync.RWMutex
+	closed   bool
+	fileSize int64
+	parts    []io.ReaderAt
+	sizes    []int64
+	size     int64
 	// offset is the position of Read on Body itself.
 	offset int64
 	// ContentType is the Content-Type header value, including the boundary.
@@ -79,7 +87,7 @@ func New(fields []Field, fileField, fileName string, file io.ReadSeeker) (*Body,
 	}
 	tail := "\r\n--" + w.Boundary() + "--\r\n"
 
-	b := &Body{ContentType: w.FormDataContentType()}
+	b := &Body{ContentType: w.FormDataContentType(), fileSize: fileSize}
 	b.add(bytes.NewReader(head.Bytes()), int64(head.Len()))
 	b.add(fileAt, fileSize)
 	b.add(strings.NewReader(tail), int64(len(tail)))
@@ -118,6 +126,11 @@ func (b *Body) Size() int64 { return b.size }
 // of the body and io.ErrUnexpectedEOF when the file is shorter than when the
 // body was built.
 func (b *Body) readAt(p []byte, off int64) (int, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.closed {
+		return 0, ErrClosed
+	}
 	if off >= b.size {
 		return 0, io.EOF
 	}
@@ -169,11 +182,23 @@ func (b *Body) Seek(offset int64, whence int) (int64, error) {
 	return abs, nil
 }
 
-// Close does nothing; the caller owns the file.
-func (b *Body) Close() error { return nil }
+// Close makes every later read of b and of its readers fail with ErrClosed,
+// and waits until reads in progress have returned. After Close, the body
+// does not touch the file any more. Close does not close the file; the
+// caller owns it. Close can be called more than once.
+func (b *Body) Close() error {
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+	return nil
+}
+
+// FileSize returns the number of file bytes the body sends.
+func (b *Body) FileSize() int64 { return b.fileSize }
 
 // NewReader returns a reader of the whole body with its own offset. Readers
-// can be used concurrently with each other and with b. Close does nothing.
+// can be used concurrently with each other and with b. Their Close does
+// nothing; use [Body.Close] to end all reads.
 func (b *Body) NewReader() io.ReadCloser { return &reader{b: b} }
 
 type reader struct {
@@ -188,7 +213,7 @@ func (r *reader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Close does nothing.
+// Close does nothing; see [Body.Close].
 func (r *reader) Close() error { return nil }
 
 // lockedReaderAt implements io.ReaderAt for a file without ReadAt by seeking

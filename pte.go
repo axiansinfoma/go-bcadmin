@@ -66,9 +66,10 @@ type InstallPTEOptions struct {
 // InstallPTE uploads a per-tenant extension (.app file) and schedules its
 // installation; it returns a poller for the install operation. file is read
 // from its start, whatever its current position, and must not change until
-// InstallPTE returns; InstallPTE leaves its position undefined. If file
-// implements io.ReaderAt (as *os.File does), every attempt reads it with
-// ReadAt; otherwise reads are serialized with Seek and Read. The file is
+// InstallPTE returns; InstallPTE leaves its position undefined but does not
+// touch file after it returns. If file implements io.ReaderAt (as *os.File
+// does), every attempt reads it with ReadAt; otherwise reads are serialized
+// with Seek and Read. The file is
 // streamed, not loaded into memory, and may be up to [MaxPTESize] bytes.
 // Available since API v2.29.
 //
@@ -95,14 +96,6 @@ func (s *AppsService) InstallPTE(ctx context.Context, file io.ReadSeeker, opts I
 		return nil, fmt.Errorf("bcadmin: file name %q must end with .app", clean(name))
 	}
 
-	size, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return nil, fmt.Errorf("bcadmin: determining the size of %s: %w", clean(name), err)
-	}
-	if size > MaxPTESize {
-		return nil, fmt.Errorf("bcadmin: %s has %d bytes; the API accepts at most %d", clean(name), size, MaxPTESize)
-	}
-
 	fields := []multipartbody.Field{
 		{Name: "acceptIsvEula", Value: strconv.FormatBool(opts.AcceptISVEULA)},
 		{Name: "installOrUpdateNeededDependencies", Value: strconv.FormatBool(opts.InstallOrUpdateNeededDependencies)},
@@ -119,6 +112,12 @@ func (s *AppsService) InstallPTE(ctx context.Context, file io.ReadSeeker, opts I
 	body, err := multipartbody.New(fields, "extensionFile", name, file)
 	if err != nil {
 		return nil, fmt.Errorf("bcadmin: building the upload: %w", err)
+	}
+	// After Close, no read of file is in progress or can start, even one of
+	// an abandoned attempt that net/http is still writing.
+	defer body.Close()
+	if size := body.FileSize(); size > MaxPTESize {
+		return nil, fmt.Errorf("bcadmin: %s has %d bytes; the API accepts at most %d", clean(name), size, MaxPTESize)
 	}
 
 	var op Operation

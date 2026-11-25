@@ -125,7 +125,11 @@ make check    # tidy, lint, test, vuln
   abandoned attempt (early 429), so `freshBodyPolicy` (after the bearer
   policy) gives each attempt its own reader from `multipartbody.Body.NewReader`,
   which reads the file with `ReadAt`. `TestInstallPTERetry` (TLS, early 429)
-  catches regressions under `-race`.
+  catches regressions under `-race`. `Body.Close` (deferred in `InstallPTE`)
+  waits for reads in progress and fails later ones, so the caller's file is
+  never read after `InstallPTE` returns. A caller's `PerRetryPolicies` run
+  after `freshBodyPolicy`; one that calls `RewindBody` brings back the shared
+  body.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no
   tags); check that Renovate proposes updates for it, otherwise bump it by
   hand.

@@ -130,8 +130,7 @@ if errors.As(err, &re) && re.Data != nil {
 if err != nil {
 	return err
 }
-op, err := p.Wait(ctx, nil)
-if err != nil {
+if _, err := p.Wait(ctx, nil); err != nil {
 	return err
 }
 
@@ -150,9 +149,14 @@ if err != nil {
 	return err
 }
 _, err = pte.Wait(ctx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
+if err != nil && !errors.Is(err, bcadmin.ErrOperationScheduled) {
+	return err
+}
 
 // Select the next update and its start time.
-err = env.Updates().Select(ctx, "27.1", &bcadmin.ScheduleUpdateOptions{SelectedDateTime: start})
+if err := env.Updates().Select(ctx, "27.1", &bcadmin.ScheduleUpdateOptions{SelectedDateTime: start}); err != nil {
+	return err
+}
 ```
 
 ## Long-running operations

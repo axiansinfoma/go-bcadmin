@@ -535,3 +535,62 @@ func TestInstallPTERetry(t *testing.T) {
 		})
 	}
 }
+
+// TestInstallPTENoReadsAfterReturn checks that the request body of a PTE
+// upload cannot read the caller's file after InstallPTE returned. The
+// transport keeps the body after its response, as net/http may when the
+// server answers before it read the body.
+func TestInstallPTENoReadsAfterReturn(t *testing.T) {
+	t.Parallel()
+	tr := &keepBodyTransport{}
+	c, err := bcadmin.NewClient(bcadmintest.Credential(), &bcadmin.ClientOptions{ClientOptions: azcore.ClientOptions{
+		Transport: tr,
+		Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+			bcadmin.ServiceName: {Endpoint: "https://bc.example.com", Audience: "https://bc.example.com"},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &countingFile{Reader: bytes.NewReader(bytes.Repeat([]byte("x"), 1<<20))}
+	_, err = c.Apps(bc, "sb").InstallPTE(context.Background(), f, bcadmin.InstallPTEOptions{FileName: "x.app"})
+	if bcadmin.ErrorCode(err) != "InvalidApp" {
+		t.Fatalf("error = %v", err)
+	}
+	if tr.body == nil {
+		t.Fatal("transport got no body")
+	}
+	before := f.calls.Load()
+	if _, err := io.Copy(io.Discard, tr.body); err == nil {
+		t.Error("reading the body after InstallPTE returned did not fail")
+	}
+	if n := f.calls.Load() - before; n != 0 {
+		t.Errorf("the file was read %d times after InstallPTE returned", n)
+	}
+}
+
+// keepBodyTransport answers 400 without reading the request body and keeps
+// the body.
+type keepBodyTransport struct{ body io.ReadCloser }
+
+func (k *keepBodyTransport) Do(req *http.Request) (*http.Response, error) {
+	k.body = req.Body
+	return &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Status:     "400 Bad Request",
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"code":"InvalidApp","message":"rejected before reading the body"}`)),
+		Request:    req,
+	}, nil
+}
+
+// countingFile counts its ReadAt calls.
+type countingFile struct {
+	*bytes.Reader
+	calls atomic.Int32
+}
+
+func (f *countingFile) ReadAt(p []byte, off int64) (int, error) {
+	f.calls.Add(1)
+	return f.Reader.ReadAt(p, off)
+}
