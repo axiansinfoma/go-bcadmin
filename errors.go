@@ -114,9 +114,18 @@ type ResponseError struct {
 	// operation that failed because of missing dependencies.
 	Data *ErrorData
 
-	// RawBody is the response body, up to 1 MiB.
+	// RawBody is the response body, up to 1 MiB. It is empty when the body
+	// could not be read, for example because it exceeded
+	// ClientOptions.MaxResponseBytes.
 	RawBody []byte
+
+	// cause is the error that prevented reading the body, if any.
+	cause error
 }
+
+// Unwrap returns the error that prevented reading the response body, for
+// example [ErrResponseTooLarge], or nil.
+func (e *ResponseError) Unwrap() error { return e.cause }
 
 // newResponseError builds a ResponseError from resp and its body, keeping at
 // most maxErrorBody bytes of the body.
@@ -142,7 +151,8 @@ func newResponseError(resp *http.Response, body []byte) *ResponseError {
 	e.RawBody = body
 	e.decodeBody()
 	if len(e.RawBody) > maxErrorBody {
-		e.RawBody = e.RawBody[:maxErrorBody]
+		// Copy so the rest of a large body can be garbage collected.
+		e.RawBody = bytes.Clone(e.RawBody[:maxErrorBody])
 	}
 	return e
 }
@@ -156,7 +166,10 @@ func (e *ResponseError) decodeBody() {
 		return
 	}
 	if inner := jsonObject(fields["error"]); len(inner) > 0 {
-		fields = inner
+		// Prefer the wrapped error, but keep top-level fields it lacks.
+		for k, v := range inner {
+			fields[k] = v
+		}
 	}
 	e.Code = jsonString(fields["code"])
 	e.Message = jsonString(fields["message"])
@@ -331,6 +344,9 @@ func (e *ResponseError) Error() string {
 		}
 		b.WriteString(": ")
 		b.WriteString(raw)
+	}
+	if e.cause != nil {
+		fmt.Fprintf(&b, " (body not read: %s)", clean(e.cause.Error()))
 	}
 	if e.RequestID != "" {
 		fmt.Fprintf(&b, " [request-id: %s]", clean(e.RequestID))

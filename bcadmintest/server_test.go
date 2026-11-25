@@ -66,3 +66,26 @@ func TestServerUnknownPath(t *testing.T) {
 		t.Errorf("error = %v, want not found", err)
 	}
 }
+
+func TestFaultNotUsedByUnauthenticatedRequest(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "environments/quotas", http.StatusOK, map[string]any{})
+	srv.Fail(bcadmintest.Fault{Path: "environments/quotas", Status: http.StatusConflict, Times: 1})
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL()+"/admin/v2.29/environments/quotas", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := srv.ClientOptions().Transport.(*http.Client).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	// The fault is still there for the authenticated client.
+	if _, err := srv.NewClient(t).Tenant().Quotas(context.Background()); !bcadmin.IsConflict(err) {
+		t.Errorf("error = %v, want the injected 409", err)
+	}
+}

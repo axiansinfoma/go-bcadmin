@@ -2,6 +2,7 @@ package bcadmin
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
@@ -125,6 +127,25 @@ func TestRedirects(t *testing.T) {
 	}
 }
 
+func TestOversizedErrorResponse(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Request-Id", "rid-1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, "<html>"+strings.Repeat("x", 4096)+"</html>")
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t, srv, func(o *ClientOptions) { o.MaxResponseBytes = 1024; o.Retry.MaxRetries = -1 })
+	err := c.Do(context.Background(), http.MethodGet, "x", nil, nil)
+	re, ok := errors.AsType[*ResponseError](err)
+	if !ok || re.StatusCode != http.StatusTooManyRequests || re.RequestID != "rid-1" {
+		t.Fatalf("error = %v, want *ResponseError with status 429", err)
+	}
+	if !errors.Is(err, ErrResponseTooLarge) || !IsThrottled(err) || !strings.Contains(err.Error(), "body not read") {
+		t.Errorf("error = %v", err)
+	}
+}
+
 func TestLimitedBodyAfterError(t *testing.T) {
 	t.Parallel()
 	b := &limitedBody{rc: io.NopCloser(strings.NewReader("0123456789")), max: 4}
@@ -135,6 +156,54 @@ func TestLimitedBodyAfterError(t *testing.T) {
 	}
 	if n, err := b.Read(buf); n != 0 || !errors.Is(err, ErrResponseTooLarge) {
 		t.Fatalf("second Read = %d, %v", n, err)
+	}
+}
+
+func TestServerTextIsCleanedInErrors(t *testing.T) {
+	t.Parallel()
+	// A status line with an escape sequence, followed by a body over the limit.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, buf, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 200 \x1b[31mOK\u202e\r\nContent-Length: 100\r\nConnection: close\r\n\r\n" + strings.Repeat("x", 100))
+		_ = buf.Flush()
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t, srv, func(o *ClientOptions) {
+		o.MaxResponseBytes = 10
+		// HTTP/1.1 only, so the connection can be hijacked.
+		tr := srv.Client().Transport.(*http.Transport).Clone()
+		tr.ForceAttemptHTTP2 = false
+		tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+		o.Transport = &http.Client{Transport: tr}
+	})
+	err := c.Do(context.Background(), http.MethodGet, "x", nil, nil)
+	if err == nil || !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("error = %v, want ErrResponseTooLarge", err)
+	}
+	if !strings.Contains(err.Error(), "(status 200  [31mOK ") {
+		t.Errorf("error %q does not name the cleaned status", err)
+	}
+	assertClean(t, err.Error())
+
+	// A nextLink host with a bidi override.
+	_, err = c.nextLink("https://a\u202eb.example.com/x")
+	if err == nil {
+		t.Fatal("foreign nextLink was accepted")
+	}
+	assertClean(t, err.Error())
+}
+
+func assertClean(t *testing.T, s string) {
+	t.Helper()
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("error %q contains %U", s, r)
+		}
 	}
 }
 

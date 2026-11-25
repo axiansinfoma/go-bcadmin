@@ -208,14 +208,16 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		Header: r.Header.Clone(),
 		Body:   body,
 	})
-	fault := s.matchFault(r)
-	mux := s.mux
-	s.mu.Unlock()
-
 	if r.Header.Get("Authorization") != "Bearer "+Token {
+		s.mu.Unlock()
 		WriteError(w, http.StatusUnauthorized, "Unauthorized", "bcadmintest: missing or wrong bearer token")
 		return
 	}
+	// Faults apply only to authenticated requests, so a rejected request does
+	// not use them up.
+	fault := s.matchFault(r)
+	mux := s.mux
+	s.mu.Unlock()
 	if fault != nil {
 		for k, v := range fault.Header {
 			w.Header()[k] = v

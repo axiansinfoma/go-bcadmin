@@ -86,7 +86,10 @@ make check    # tidy, lint, test, vuln
 - Without a custom Transport, `newDefaultHTTPClient` refuses cross-origin
   redirects; 3xx responses that reach `send` become `*ResponseError`.
 - Response bodies are capped by `limitTransport` (`MaxResponseBytes`); the
-  error is non-retriable for azcore.
+  error is non-retriable for azcore. azcore reads bodies inside the pipeline,
+  and its bearer token policy returns a nil response when a later policy
+  fails, so `tooLargeError` carries the response; `send` uses it to return a
+  `*ResponseError` with status and headers.
 - `ErrNotFound` matches 404 and the code `EnvironmentNotFound` only; do not
   widen it to every code ending in "NotFound" (some mean "service not found").
 - `@odata.nextLink` must point to the configured endpoint; others are refused

@@ -146,12 +146,26 @@ func (c *Client) newRequest(ctx context.Context, method, u string, body any) (*p
 func (c *Client) send(req *policy.Request, out any) error {
 	resp, err := c.pl.Do(req)
 	if err != nil {
+		// The pipeline reads the body, so a body over MaxResponseBytes fails
+		// here; keep the status and headers of the response.
+		if tl, ok := errors.AsType[*tooLargeError](err); ok && tl.resp != nil {
+			resp := tl.resp
+			if resp.StatusCode >= http.StatusMultipleChoices {
+				if resp.Request == nil {
+					resp.Request = req.Raw()
+				}
+				re := newResponseError(resp, nil)
+				re.cause = err
+				return re
+			}
+			return fmt.Errorf("bcadmin: %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.Path, clean(resp.Status), err)
+		}
 		return fmt.Errorf("bcadmin: %s %s: %w", req.Raw().Method, req.Raw().URL.Path, err)
 	}
 	payload, err := runtime.Payload(resp)
 	_ = resp.Body.Close()
 	if err != nil {
-		return fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.Path, resp.Status, err)
+		return fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.Path, clean(resp.Status), err)
 	}
 	// 3xx responses only reach this point when a redirect was refused.
 	if resp.StatusCode >= http.StatusMultipleChoices {
@@ -313,7 +327,7 @@ func (c *Client) nextLink(link string) (string, error) {
 		return "", fmt.Errorf("bcadmin: invalid @odata.nextLink %q: %w", link, err)
 	}
 	if !strings.EqualFold(u.Scheme, c.baseURL.Scheme) || !strings.EqualFold(u.Host, c.baseURL.Host) {
-		return "", fmt.Errorf("bcadmin: refusing @odata.nextLink to %s://%s, which is not the API endpoint", u.Scheme, u.Host)
+		return "", fmt.Errorf("bcadmin: refusing @odata.nextLink to %q, which is not the API endpoint", clean(u.Scheme+"://"+u.Host))
 	}
 	return u.String(), nil
 }

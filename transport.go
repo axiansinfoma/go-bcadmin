@@ -69,7 +69,7 @@ func (t *limitTransport) Do(req *http.Request) (*http.Response, error) {
 	if err != nil || resp == nil || resp.Body == nil {
 		return resp, err
 	}
-	resp.Body = &limitedBody{rc: resp.Body, r: io.LimitReader(resp.Body, t.max+1), max: t.max}
+	resp.Body = &limitedBody{rc: resp.Body, r: io.LimitReader(resp.Body, t.max+1), max: t.max, resp: resp}
 	return resp, nil
 }
 
@@ -80,6 +80,7 @@ type limitedBody struct {
 	max  int64
 	read int64
 	err  error
+	resp *http.Response
 }
 
 // Read reads from the body and fails once the limit is exceeded.
@@ -90,7 +91,7 @@ func (b *limitedBody) Read(p []byte) (int, error) {
 	n, err := b.r.Read(p)
 	b.read += int64(n)
 	if b.read > b.max {
-		b.err = &tooLargeError{max: b.max}
+		b.err = &tooLargeError{max: b.max, resp: b.resp}
 		return n - int(b.read-b.max), b.err
 	}
 	return n, err
@@ -99,8 +100,13 @@ func (b *limitedBody) Read(p []byte) (int, error) {
 // Close closes the underlying body.
 func (b *limitedBody) Close() error { return b.rc.Close() }
 
-// tooLargeError matches ErrResponseTooLarge and is not retried by azcore.
-type tooLargeError struct{ max int64 }
+// tooLargeError matches ErrResponseTooLarge and is not retried by azcore. It
+// keeps the response, because azcore's bearer token policy drops the response
+// when a later policy fails.
+type tooLargeError struct {
+	max  int64
+	resp *http.Response
+}
 
 // Error describes the exceeded limit.
 func (e *tooLargeError) Error() string {

@@ -138,6 +138,14 @@ func TestResponseErrorPassThrough(t *testing.T) {
 			},
 		},
 		{
+			name:        "top-level fields kept next to a wrapped error",
+			body:        `{"code":"Top","message":"top msg","error":{"target":"x"}}`,
+			status:      http.StatusBadRequest,
+			wantCode:    "Top",
+			wantMessage: "top msg",
+			wantInError: []string{"Top: top msg (target: x)"},
+		},
+		{
 			name:        "wrapped with only innererror",
 			body:        `{"error":{"innererror":{"code":"Deep"}}}`,
 			status:      http.StatusBadRequest,

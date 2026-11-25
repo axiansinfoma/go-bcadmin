@@ -95,7 +95,7 @@ type Operation struct {
 	// CreatedBy is the user or app that started the operation.
 	CreatedBy string `json:"createdBy,omitempty"`
 	// CreatorPrincipalType is the type of principal that started the
-	// operation, for example "User" or "Application".
+	// operation, for example "User" or "App".
 	CreatorPrincipalType string `json:"creatorPrincipalType,omitempty"`
 	// CanceledBy is the user or app that canceled the operation.
 	CanceledBy string `json:"canceledBy,omitempty"`
