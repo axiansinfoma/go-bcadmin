@@ -113,6 +113,36 @@ which the operation cannot be tracked (before v2.9 for create, copy, delete and
 match production configuration, v2.7 for rename, v2.6 for restore and v2.18
 for recover), instead of starting an operation the client cannot follow.
 
+## Apps and updates
+
+```go
+apps := env.Apps() // or client.Apps(bcadmin.FamilyBusinessCentral, "uat")
+
+// Install an AppSource app with its dependencies.
+p, err := apps.Install(ctx, appID, bcadmin.InstallAppOptions{
+	AcceptISVEULA:                     true, // accepts the provider's terms, see the API docs
+	InstallOrUpdateNeededDependencies: true,
+})
+var re *bcadmin.ResponseError
+if errors.As(err, &re) && re.Data != nil {
+	// Missing dependencies: re.Data.Requirements
+}
+op, err := p.Wait(ctx, nil)
+
+// Upload a per-tenant extension (streamed, up to 50 MB).
+f, err := os.Open("Contoso_MyApp_1.0.0.0.app")
+defer f.Close()
+pte, err := apps.InstallPTE(ctx, f, bcadmin.InstallPTEOptions{
+	FileName:           "Contoso_MyApp_1.0.0.0.app",
+	AcceptISVEULA:      true,
+	DeploymentSchedule: bcadmin.DeploymentUpdateWindow,
+})
+_, err = pte.Wait(ctx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
+
+// Select the next update and its start time.
+err = env.Updates().Select(ctx, "27.1", &bcadmin.ScheduleUpdateOptions{SelectedDateTime: start})
+```
+
 ## Long-running operations
 
 Calls that start an operation return a `*bcadmin.Poller[T]`:
@@ -248,8 +278,20 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Environments | `POST .../environments/{name}/matchProductionConfiguration` | `Environments().MatchProductionConfiguration` | v2.9 | ✅ |
 | Environments | `GET .../environments/{name}/matchProductionConfiguration/metrics` | `Environments().MatchProductionConfigurationMetrics` | | ✅ |
 | Environments | `POST bap/.../environments/{name}/linkEnvironment`, `unlinkEnvironment` | `Environments().LinkPowerPlatform`, `UnlinkPowerPlatform` (delegated auth only) | v2.21 | ✅ |
-| Apps | list, available updates, install, update, cancel update, uninstall, uninstall requirements, operations, per-tenant extension upload, scheduled per-tenant extension operations | | | 🚧 |
-| Updates | list, select/schedule, cancel | | | 🚧 |
+| Apps | `GET .../environments/{name}/apps` | `Apps(...).List`, `Environment.Apps().List` | | ✅ |
+| Apps | `GET .../apps/availableUpdates` | `Apps(...).AvailableUpdates` | | ✅ |
+| Apps | `POST .../apps/{appId}/install` | `Apps(...).Install` | v2.6 | ✅ |
+| Apps | `POST .../apps/{appId}/update` | `Apps(...).Update` | v2.6 | ✅ |
+| Apps | `POST .../apps/{appId}/update/cancel` | `Apps(...).CancelUpdate` | | ✅ |
+| Apps | `POST .../apps/{appId}/uninstall` | `Apps(...).Uninstall` | v2.6 | ✅ |
+| Apps | `GET .../apps/{appId}/uninstallRequirements` | `Apps(...).UninstallRequirements` | v2.25 | ✅ |
+| Apps | `GET .../apps/{appId}/operations[/{id}]` | `Apps(...).Operations`, `GetOperation`, `ResumeOperation` | | ✅ |
+| Per-tenant extensions | `POST .../apps/pteInstall` (multipart upload) | `Apps(...).InstallPTE` | v2.29 | ✅ |
+| Per-tenant extensions | `GET .../apps/scheduledPteOperations` | `Apps(...).ScheduledPTEOperations` | v2.29 | ✅ |
+| Per-tenant extensions | `POST .../apps/{appId}/removeScheduledPteVersion` | `Apps(...).RemoveScheduledPTEVersion` | v2.29 | ✅ |
+| Updates | `GET .../environments/{name}/updates` | `Updates(...).List`, `Environment.Updates().List` | | ✅ |
+| Updates | `PATCH .../environments/{name}/updates/{version}` | `Updates(...).Select`, `Reschedule` | | ✅ |
+| Updates | `POST .../environments/{name}/operations/{id}/cancel` | `Updates(...).CancelRunning` | v2.28 | ✅ |
 | Settings | update window, time zones, Application Insights, security group, partner access, Microsoft 365 licenses, AppSource update cadence | | | 🚧 |
 | Sessions | list, get, terminate | | | 🚧 |
 | Database export | metrics, start, history | | | 🚧 |

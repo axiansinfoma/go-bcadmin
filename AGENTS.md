@@ -14,6 +14,8 @@ Business Central Administration Center API. Read README.md for the user view.
 | `errors.go` | `ResponseError` (API error body pass-through), sentinels, `OperationError`. |
 | `operation.go`, `poller.go` | `Operation`, statuses and types; generic `Poller[T]`. |
 | `tenant.go`, `applications.go`, `environments.go`, ... | One file per API area with its types and service. |
+| `apps.go`, `pte.go`, `updates.go` | Environment-scoped services (`Client.Apps`, `Client.Updates`, `Environment.Apps()`, `Environment.Updates()`); unbound environments give services whose methods return an error. |
+| `internal/multipartbody/` | Seekable multipart body that streams the .app file of a PTE upload. |
 | `environment.go` | The `Environment` object; its methods delegate to `EnvironmentsService`. |
 | `time.go` | `Time`, a tolerant timestamp type; use `*Time` for all timestamps in responses. |
 | `version.go` | `DefaultAPIVersion`; module version for the User-Agent from build info. |
@@ -114,6 +116,10 @@ make check    # tidy, lint, test, vuln
   (`minorTrackable*` constants in environments.go).
 - `Get environment` is documented as wrapped in `{"value": [...]}`, but the
   service returns the object; `EnvironmentsService.Get` accepts both.
+- A single app operation (`apps/{appId}/operations/{id}`) is not documented
+  as plain or wrapped; `AppsService.GetOperation` accepts both.
+- The PTE upload body must be seekable (azcore sets Content-Length and
+  rewinds it on retry); never read the file into memory.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no
   tags); check that Renovate proposes updates for it, otherwise bump it by
   hand.

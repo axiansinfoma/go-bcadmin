@@ -1,0 +1,32 @@
+{
+  "value": [
+    {
+      "id": "00000000-0000-0000-0000-000000000402",
+      "type": "Install",
+      "sourceAppVersion": "",
+      "targetAppVersion": "2.0.0.0",
+      "status": "scheduled",
+      "createdOn": "2026-11-20T10:00:00Z",
+      "startedOn": null,
+      "completedOn": null,
+      "errorMessage": "",
+      "createdBy": "admin@contoso.com",
+      "canceledBy": "",
+      "creatorPrincipalType": "User",
+      "appId": "00000000-0000-0000-0000-000000000102",
+      "aadTenantId": "00000000-0000-0000-0000-000000000001",
+      "scheduleKind": "NextMajorUpdate",
+      "parameters": {
+        "appId": "00000000-0000-0000-0000-000000000102",
+        "targetAppVersion": "2.0.0.0",
+        "countryCode": "DE",
+        "languageId": "de-DE",
+        "name": "Contoso Customizations",
+        "publisher": "Contoso",
+        "scheduleKind": "NextMajorUpdate",
+        "targetRelease": "29.0.0.0",
+        "syncMode": "Add"
+      }
+    }
+  ]
+}

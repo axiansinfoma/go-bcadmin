@@ -1,0 +1,26 @@
+{
+  "value": [
+    {
+      "appId": "00000000-0000-0000-0000-000000000101",
+      "name": "Contoso Connector",
+      "publisher": "Contoso",
+      "version": "2.1.0.0",
+      "state": "Installed",
+      "lastOperationId": "00000000-0000-0000-0000-000000000201",
+      "lastUpdateAttemptResult": "Succeeded",
+      "lastUninstallOperationId": "",
+      "lastUninstallAttemptResult": "",
+      "appType": "global",
+      "canBeUninstalled": true
+    },
+    {
+      "appId": "00000000-0000-0000-0000-000000000102",
+      "name": "Contoso Customizations",
+      "publisher": "Contoso",
+      "version": "1.0.0.5",
+      "state": "UpdatePending",
+      "appType": "tenant",
+      "canBeUninstalled": false
+    }
+  ]
+}

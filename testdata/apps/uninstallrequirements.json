@@ -1,0 +1,12 @@
+{
+  "value": [
+    {
+      "appId": "00000000-0000-0000-0000-000000000104",
+      "name": "Contoso Reports",
+      "publisher": "Contoso",
+      "version": "1.0.0.0",
+      "type": "Global",
+      "EnvironmentAppOperationRequirementType": "Uninstall"
+    }
+  ]
+}
