@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -416,5 +417,32 @@ func TestUnboundEnvironment(t *testing.T) {
 	}
 	if _, err := env.Delete(context.Background()); err == nil {
 		t.Error("unbound Delete did not fail")
+	}
+}
+
+func TestEnvironmentCreateDocumentedResponse(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	b, err := os.ReadFile("testdata/environments/create-operation.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Handle(http.MethodPut, "applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write(b)
+	})
+	p, err := srv.NewClient(t).Environments().Create(context.Background(), bc, "NewEnvironment",
+		bcadmin.CreateEnvironmentOptions{Type: bcadmin.EnvironmentTypeProduction, CountryCode: "US", ApplicationVersion: "19.0.28719.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := lastBody(t, srv); body["applicationVersion"] != "19.0.28719.0" || len(body) != 3 {
+		t.Errorf("create body = %v", body)
+	}
+	op := p.Operation()
+	if op.ID != "00000000-0000-0000-0000-000000000020" || !op.Status.Is(bcadmin.OperationStatusScheduled) || op.Parameters["countryCode"] != "US" ||
+		op.EnvironmentName != "NewEnvironment" || op.CompletedOn == nil || p.Done() {
+		t.Errorf("operation = %+v", op)
 	}
 }
