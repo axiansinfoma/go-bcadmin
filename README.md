@@ -152,7 +152,7 @@ client, err := bcadmin.NewClient(cred, &bcadmin.ClientOptions{
 		APIVersion: "v2.28",                                     // default: bcadmin.DefaultAPIVersion
 		Telemetry:  policy.TelemetryOptions{ApplicationID: "my-tool/1.2.3"}, // User-Agent prefix
 		Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-			bcadmin.ServiceName: {Endpoint: "https://...", Audience: "https://..."}, // other clouds
+			bcadmin.ServiceName: {Endpoint: "https://...", Audience: "https://..."}, // other clouds; set both
 		}},
 	},
 	PollFrequency: 30 * time.Second,

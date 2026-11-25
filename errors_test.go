@@ -213,6 +213,18 @@ func TestResponseErrorPassThrough(t *testing.T) {
 	}
 }
 
+func TestResponseErrorLargeJSONBodyIsDecoded(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	body := `{"code":"invalidInput","message":"too many problems","extensionData":{"pad":"` + strings.Repeat("x", 2<<20) + `"}}`
+	srv.Fail(bcadmintest.Fault{Path: "environments/quotas", Status: http.StatusBadRequest, Body: body})
+	_, err := srv.NewClient(t).Tenant().Quotas(context.Background())
+	re, ok := errors.AsType[*bcadmin.ResponseError](err)
+	if !ok || re.Code != "invalidInput" || re.Message != "too many problems" || len(re.RawBody) != 1<<20 {
+		t.Errorf("error = %v", err)
+	}
+}
+
 func TestResponseErrorLargeBody(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t)
@@ -292,6 +304,10 @@ func TestOperationError(t *testing.T) {
 	}
 	if e.Canceled() {
 		t.Error("Canceled() = true for a failed operation")
+	}
+	injected := &bcadmin.OperationError{Operation: &bcadmin.Operation{ID: "op\n3", Status: "Failed", ErrorMessage: "bad\n\x1b[31mforged\u202e"}}
+	if got := injected.Error(); strings.ContainsAny(got, "\n\x1b\u202e") {
+		t.Errorf("Error() = %q contains control or format characters", got)
 	}
 	c := &bcadmin.OperationError{Operation: &bcadmin.Operation{ID: "op2", Status: "Cancelled"}}
 	if !c.Canceled() {

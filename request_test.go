@@ -187,7 +187,7 @@ func TestRetryTransportErrors(t *testing.T) {
 				Transport: tr,
 				Retry:     policy.RetryOptions{MaxRetries: 2, RetryDelay: time.Millisecond, MaxRetryDelay: 10 * time.Millisecond},
 				Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-					bcadmin.ServiceName: {Endpoint: "https://bc.example.com"},
+					bcadmin.ServiceName: {Endpoint: "https://bc.example.com", Audience: "https://bc.example.com"},
 				}},
 			}})
 			if err != nil {

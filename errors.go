@@ -22,8 +22,9 @@ var (
 	// ErrConflict matches responses with HTTP status 409.
 	ErrConflict = errors.New("bcadmin: conflict")
 
-	// ErrThrottled matches responses with HTTP status 429, returned when the
-	// retries configured in ClientOptions.Retry are used up.
+	// ErrThrottled matches responses with HTTP status 429. They are returned
+	// when the retries configured in ClientOptions.Retry are used up, or right
+	// away when Retry-After asks for a longer wait than Retry.MaxRetryDelay.
 	ErrThrottled = errors.New("bcadmin: throttled")
 
 	// ErrOperationScheduled is returned by [Poller.Wait] when
@@ -137,11 +138,12 @@ func newResponseError(resp *http.Response, body []byte) *ResponseError {
 			break
 		}
 	}
-	if len(body) > maxErrorBody {
-		body = body[:maxErrorBody]
-	}
+	// Decode the complete body, then keep at most maxErrorBody bytes of it.
 	e.RawBody = body
 	e.decodeBody()
+	if len(e.RawBody) > maxErrorBody {
+		e.RawBody = e.RawBody[:maxErrorBody]
+	}
 	return e
 }
 
@@ -367,12 +369,13 @@ func writeDetails(b *strings.Builder, label string, details []ErrorDetail) {
 	}
 }
 
-// clean replaces control characters (including newlines and terminal escape
-// sequences) with spaces, so server-provided text cannot garble log output.
+// clean replaces control and format characters (including newlines, terminal
+// escape sequences and bidirectional overrides) with spaces, so
+// server-provided text cannot garble log output.
 // The fields of ResponseError keep the original text.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return ' '
 		}
 		return r
@@ -424,13 +427,13 @@ func (e *OperationError) Error() string {
 	if op == nil {
 		return "bcadmin: operation failed"
 	}
-	msg := fmt.Sprintf("bcadmin: operation %s", op.ID)
+	msg := "bcadmin: operation " + clean(op.ID)
 	if op.Type != "" {
-		msg += " (" + string(op.Type) + ")"
+		msg += " (" + clean(string(op.Type)) + ")"
 	}
-	msg += " ended with status " + string(op.Status)
+	msg += " ended with status " + clean(string(op.Status))
 	if op.ErrorMessage != "" {
-		msg += ": " + op.ErrorMessage
+		msg += ": " + clean(op.ErrorMessage)
 	}
 	return msg
 }

@@ -83,7 +83,8 @@ func (p *Poller[T]) Poll(ctx context.Context) (*Operation, error) {
 
 // Result returns the result of a finished operation. It returns an
 // [*OperationError] when the operation failed or was canceled, and an error
-// when the operation is not done yet.
+// when the operation is not done yet. A Skipped operation returns its result
+// without an error; check Operation().Status to tell it from Succeeded.
 func (p *Poller[T]) Result(ctx context.Context) (T, error) {
 	return p.resultWith(ctx, nil)
 }
@@ -91,7 +92,7 @@ func (p *Poller[T]) Result(ctx context.Context) (T, error) {
 func (p *Poller[T]) resultWith(ctx context.Context, opts *WaitOptions) (T, error) {
 	var zero T
 	if !p.Done() {
-		return zero, fmt.Errorf("bcadmin: operation %s has not finished, status %q", p.op.ID, p.op.Status)
+		return zero, fmt.Errorf("bcadmin: operation %s has not finished, status %q", clean(p.op.ID), p.op.Status)
 	}
 	if p.op.Status.Is(OperationStatusFailed) || p.op.Status.Is(OperationStatusCanceled) {
 		return zero, &OperationError{Operation: p.Operation()}
@@ -110,7 +111,8 @@ func (p *Poller[T]) resultWith(ctx context.Context, opts *WaitOptions) (T, error
 
 // Wait polls the operation until it is done and returns its result.
 //
-// It returns an [*OperationError] when the operation failed or was canceled,
+// It returns an [*OperationError] when the operation failed or was canceled
+// (a Skipped operation is not an error, see [Poller.Result]),
 // [ErrOperationScheduled] when opts.TreatScheduledAsDone is set and the
 // operation is scheduled, and an error wrapping ctx.Err() (and the context's
 // cause, if one was set) when ctx is done first. In the last case the operation keeps running in Business Central;
@@ -136,7 +138,7 @@ func (p *Poller[T]) Wait(ctx context.Context, opts *WaitOptions) (T, error) {
 			return p.resultWith(ctx, opts)
 		}
 		if scheduledIsDone && p.Scheduled() {
-			return zero, fmt.Errorf("%w: operation %s", ErrOperationScheduled, p.op.ID)
+			return zero, fmt.Errorf("%w: operation %s", ErrOperationScheduled, clean(p.op.ID))
 		}
 		timer.Reset(freq)
 		select {
@@ -164,7 +166,7 @@ func (p *Poller[T]) pollOnce(ctx context.Context) error {
 func (p *Poller[T]) ctxError(ctx context.Context) error {
 	err, cause := ctx.Err(), context.Cause(ctx)
 	if cause != nil && !errors.Is(cause, err) {
-		return fmt.Errorf("bcadmin: waiting for operation %s: %w (cause: %w)", p.op.ID, err, cause)
+		return fmt.Errorf("bcadmin: waiting for operation %s: %w (cause: %w)", clean(p.op.ID), err, cause)
 	}
-	return fmt.Errorf("bcadmin: waiting for operation %s: %w", p.op.ID, err)
+	return fmt.Errorf("bcadmin: waiting for operation %s: %w", clean(p.op.ID), err)
 }

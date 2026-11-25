@@ -22,7 +22,7 @@ func TestNewClientValidation(t *testing.T) {
 		return &bcadmin.ClientOptions{ClientOptions: azcore.ClientOptions{
 			InsecureAllowCredentialWithHTTP: insecure,
 			Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-				bcadmin.ServiceName: {Endpoint: endpoint},
+				bcadmin.ServiceName: {Endpoint: endpoint, Audience: "https://bc.example.com"},
 			}},
 		}}
 	}
@@ -43,6 +43,9 @@ func TestNewClientValidation(t *testing.T) {
 		{name: "relative endpoint", cred: cred, opts: withEndpoint("bc.example.com", false), wantErr: "want an absolute https URL"},
 		{name: "ftp endpoint", cred: cred, opts: withEndpoint("ftp://bc.example.com", false), wantErr: "want an absolute https URL"},
 		{name: "query in endpoint", cred: cred, opts: withEndpoint("https://bc.example.com/?x=1", false), wantErr: "must not contain a query"},
+		{name: "endpoint without audience", cred: cred, opts: &bcadmin.ClientOptions{ClientOptions: azcore.ClientOptions{
+			Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{bcadmin.ServiceName: {Endpoint: "https://bc.example.com"}}},
+		}}, wantErr: "both Endpoint and Audience"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -151,7 +151,7 @@ func (c *Client) send(req *policy.Request, out any) error {
 	payload, err := runtime.Payload(resp)
 	_ = resp.Body.Close()
 	if err != nil {
-		return fmt.Errorf("bcadmin: reading response of %s %s: %w", req.Raw().Method, req.Raw().URL.Path, err)
+		return fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.Path, resp.Status, err)
 	}
 	// 3xx responses only reach this point when a redirect was refused.
 	if resp.StatusCode >= http.StatusMultipleChoices {

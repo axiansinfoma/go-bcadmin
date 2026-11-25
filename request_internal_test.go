@@ -28,7 +28,7 @@ func newTestClient(t *testing.T, srv *httptest.Server, mut func(*ClientOptions))
 		Transport: srv.Client(),
 		Retry:     policy.RetryOptions{RetryDelay: time.Millisecond, MaxRetryDelay: 10 * time.Millisecond},
 		Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-			ServiceName: {Endpoint: srv.URL},
+			ServiceName: {Endpoint: srv.URL, Audience: "https://test.example.com"},
 		}},
 	}}
 	if mut != nil {

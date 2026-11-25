@@ -70,7 +70,8 @@ no backports.
 ## Security Properties You Can Rely On
 
 - **Tokens go only to the configured endpoint.** Requests use HTTPS (TLS 1.2 or
-  later with the default transport). An `http://` endpoint is rejected unless
+  later with the default transport). A custom endpoint must come with its own
+  token audience. An `http://` endpoint is rejected unless
   `InsecureAllowCredentialWithHTTP` is set. `@odata.nextLink` URLs and redirects
   that point to another scheme or host are not followed. A custom
   `ClientOptions.Transport` is responsible for its own redirect policy.
@@ -80,12 +81,14 @@ no backports.
   validated (it must not be empty, equal to `.` or `..`, or contain `/`, `\` or
   control characters) and escaped. `Client.Do` takes a caller-built relative
   path and query; it rejects absolute URLs and `.`/`..` segments, but escaping
-  the values in it is the caller's responsibility.
+  the values in it is the caller's responsibility (values must be escaped
+  exactly once).
 - **Non-idempotent requests are not repeated.** POST, PATCH, creating PUT
-  requests and every non-GET request sent with `Client.Do` are
-  only retried when the service rejected them before processing (429, or 503
-  with `Retry-After`) or the connection could not be established, unless
+  requests and requests sent with `Client.Do` other than GET, HEAD and OPTIONS
+  are only retried when the service rejected them before processing (429, or
+  503 with `Retry-After`) or the connection could not be established, unless
   `RetryNonIdempotent` is set.
 - **No secrets in errors.** Error messages contain the request method, path and
-  the API's error body, never request headers or tokens. Control characters in
-  server text are replaced in error messages.
+  the API's error body, never request headers or tokens. Control and format
+  characters in server text are replaced in the messages of `ResponseError`,
+  `OperationError` and poller errors.

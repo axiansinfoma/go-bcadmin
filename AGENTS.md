@@ -95,6 +95,9 @@ make check    # tidy, lint, test, vuln
   behavior).
 - azcore treats `RetryDelay: -1` as zero delay and its overflow check then uses
   the maximum delay; tests should use small positive delays.
+- `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no
+  tags); check that Renovate proposes updates for it, otherwise bump it by
+  hand.
 - `bcadmintest` patterns use `http.ServeMux` syntax; `applications/` needs
   `applications/{$}` to match only that path.
 - This repository is public. Never add tenant IDs, environment or customer

@@ -61,7 +61,10 @@ type Fault struct {
 	Status int
 	// Body is the response body, sent as is.
 	Body string
-	// Header contains additional response headers, for example Retry-After.
+	// Header contains additional response headers, for example
+	// "Retry-After-Ms": {"10"} for a fast retry. The client gives up instead
+	// of retrying when the requested delay exceeds its Retry.MaxRetryDelay
+	// (5 s with ClientOptions).
 	Header http.Header
 	// Times is how many requests the fault answers. Zero means every request.
 	Times int
@@ -110,6 +113,9 @@ func (s *Server) APIVersion() string { return s.apiVersion }
 
 // ClientOptions returns client options that point a bcadmin client at the
 // server, trust its certificate and use short retry and poll intervals.
+// They are meant for tests only: the transport trusts the test server's
+// certificate and follows redirects without the default client's
+// same-origin restriction.
 func (s *Server) ClientOptions() *bcadmin.ClientOptions {
 	return &bcadmin.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
@@ -120,7 +126,7 @@ func (s *Server) ClientOptions() *bcadmin.ClientOptions {
 			Transport: s.srv.Client(),
 			Retry: policy.RetryOptions{
 				RetryDelay:    time.Millisecond,
-				MaxRetryDelay: 50 * time.Millisecond,
+				MaxRetryDelay: 5 * time.Second,
 			},
 		},
 		PollFrequency: time.Millisecond,

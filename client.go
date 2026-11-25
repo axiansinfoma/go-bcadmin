@@ -44,7 +44,8 @@ var apiVersionPattern = regexp.MustCompile(`^v\d+\.\d+$`)
 // The embedded [azcore.ClientOptions] configure the HTTP pipeline:
 //   - APIVersion selects the Admin Center API version (default
 //     [DefaultAPIVersion]), for example "v2.28".
-//   - Cloud.Services[ServiceName] overrides the endpoint and token audience.
+//   - Cloud.Services[ServiceName] overrides the endpoint and token audience;
+//     both must be set.
 //   - Retry configures retries of throttled and failed requests. See
 //     RetryNonIdempotent for POST and PATCH requests.
 //   - Telemetry.ApplicationID is added to the User-Agent header.
@@ -57,8 +58,9 @@ var apiVersionPattern = regexp.MustCompile(`^v\d+\.\d+$`)
 type ClientOptions struct {
 	azcore.ClientOptions
 
-	// RetryNonIdempotent allows retrying POST and PATCH requests (and PUT
-	// requests that create resources) like GET requests: on every status code
+	// RetryNonIdempotent allows retrying POST and PATCH requests, PUT
+	// requests that create resources, and requests sent with Client.Do other
+	// than GET, HEAD and OPTIONS like GET requests: on every status code
 	// in Retry.StatusCodes and on transport errors that azcore retries. By default they are only
 	// retried on 429, on 503 with a Retry-After header, and when the connection
 	// could not be established, because the service may already have started
@@ -110,11 +112,13 @@ func NewClient(cred azcore.TokenCredential, options *ClientOptions) (*Client, er
 
 	endpoint, audience := DefaultEndpoint, DefaultAudience
 	if svc, ok := opts.Cloud.Services[ServiceName]; ok {
-		if svc.Endpoint != "" {
-			endpoint = svc.Endpoint
+		// Endpoint and audience belong together: a token for the public
+		// cloud audience must not be sent to another endpoint.
+		if (svc.Endpoint == "") != (svc.Audience == "") {
+			return nil, errors.New("bcadmin: Cloud.Services[ServiceName] must set both Endpoint and Audience")
 		}
-		if svc.Audience != "" {
-			audience = svc.Audience
+		if svc.Endpoint != "" {
+			endpoint, audience = svc.Endpoint, svc.Audience
 		}
 	}
 	base, err := url.Parse(strings.TrimRight(endpoint, "/"))

@@ -42,7 +42,8 @@
 //
 // Requests are retried on throttling (429) and transient server errors with
 // exponential backoff, honoring the Retry-After header. Requests that are not
-// idempotent (POST, PATCH, and PUT requests that create resources) are only
+// idempotent (POST, PATCH, PUT requests that create resources, and requests
+// sent with [Client.Do] other than GET, HEAD and OPTIONS) are only
 // retried when the service rejected them before processing (429, or 503 with
 // a Retry-After header) or the connection could not be established, so an
 // operation is not started twice by a retry. See [ClientOptions].
