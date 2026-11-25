@@ -2,7 +2,6 @@ package bcadmin
 
 import (
 	"strings"
-	"time"
 )
 
 // OperationStatus is the status of a long-running operation. The API is not
@@ -87,11 +86,11 @@ type Operation struct {
 	// AadTenantID is the Microsoft Entra tenant of the environment.
 	AadTenantID string `json:"aadTenantId,omitempty"`
 	// CreatedOn is when the operation was created.
-	CreatedOn *time.Time `json:"createdOn,omitempty"`
+	CreatedOn *Time `json:"createdOn,omitempty"`
 	// StartedOn is when the operation started running.
-	StartedOn *time.Time `json:"startedOn,omitempty"`
+	StartedOn *Time `json:"startedOn,omitempty"`
 	// CompletedOn is when the operation finished.
-	CompletedOn *time.Time `json:"completedOn,omitempty"`
+	CompletedOn *Time `json:"completedOn,omitempty"`
 	// CreatedBy is the user or app that started the operation.
 	CreatedBy string `json:"createdBy,omitempty"`
 	// CreatorPrincipalType is the type of principal that started the

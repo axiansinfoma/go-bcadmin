@@ -81,3 +81,27 @@ func ExampleResponseError() {
 		fmt.Println(re.StatusCode, re.Code, re.Message, re.RequestID)
 	}
 }
+
+func ExampleEnvironmentsService_Create() {
+	var client *bcadmin.Client // from bcadmin.NewClient
+	if client == nil {
+		return
+	}
+	ctx := context.Background()
+	poller, err := client.Environments().Create(ctx, bcadmin.FamilyBusinessCentral, "uat", bcadmin.CreateEnvironmentOptions{
+		Type:        bcadmin.EnvironmentTypeSandbox,
+		CountryCode: "DE",
+	})
+	if err != nil {
+		fmt.Println(bcadmin.ErrorCode(err), err) // for example "resourceExists"
+		return
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
+	defer cancel()
+	env, err := poller.Wait(waitCtx, &bcadmin.WaitOptions{UntilEnvironmentActive: true})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(env.Name, env.Status, env.WebClientLoginURL)
+}

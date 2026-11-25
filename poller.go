@@ -19,6 +19,16 @@ type WaitOptions struct {
 	// scheduled operation has run (which can take until the next update
 	// window or update).
 	TreatScheduledAsDone bool
+
+	// UntilEnvironmentActive makes Wait, for pollers whose result is an
+	// environment (create, copy, recover, rename, restore), keep polling the
+	// environment after the operation succeeded until its status is Active.
+	// It fails when the environment reaches a failed status or a status
+	// from which it cannot become Active (Removing, SoftDeleting,
+	// SoftDeleted). Pollers of other
+	// operations ignore it. The environment may stay in a non-final status
+	// for a long time, so give the context a deadline.
+	UntilEnvironmentActive bool
 }
 
 // Poller tracks a long-running operation. T is the type of the result, for
@@ -30,9 +40,9 @@ type Poller[T any] struct {
 	fetch  func(ctx context.Context) (*Operation, error)
 	result func(ctx context.Context, op *Operation, opts *WaitOptions) (T, error)
 
-	resultDone bool
-	res        T
-	resErr     error
+	resultDone   bool
+	resultActive bool // the cached result was built with UntilEnvironmentActive
+	res          T
 }
 
 // newPoller returns a poller for op. fetch returns the current state of the
@@ -77,6 +87,9 @@ func (p *Poller[T]) Poll(ctx context.Context) (*Operation, error) {
 	if op.ID == "" {
 		op.ID = p.op.ID
 	}
+	if p.op.ID != "" && !asciiEqualFold(op.ID, p.op.ID) {
+		return nil, fmt.Errorf("bcadmin: polling operation %s returned operation %s", clean(p.op.ID), clean(op.ID))
+	}
 	p.op = *op
 	return p.Operation(), nil
 }
@@ -97,15 +110,16 @@ func (p *Poller[T]) resultWith(ctx context.Context, opts *WaitOptions) (T, error
 	if p.op.Status.Is(OperationStatusFailed) || p.op.Status.Is(OperationStatusCanceled) {
 		return zero, &OperationError{Operation: p.Operation()}
 	}
-	if p.resultDone {
-		return p.res, p.resErr
+	wantActive := opts != nil && opts.UntilEnvironmentActive
+	if p.resultDone && (p.resultActive || !wantActive) {
+		return p.res, nil
 	}
 	res, err := p.result(ctx, p.Operation(), opts)
 	if err != nil {
 		// Do not cache errors of the result request; it can be retried.
 		return zero, err
 	}
-	p.res, p.resErr, p.resultDone = res, nil, true
+	p.res, p.resultDone, p.resultActive = res, true, wantActive
 	return res, nil
 }
 
@@ -167,9 +181,15 @@ func (p *Poller[T]) pollOnce(ctx context.Context) error {
 // ctxError returns the error for a done ctx. It wraps ctx.Err() and, when it
 // differs, the context's cause.
 func (p *Poller[T]) ctxError(ctx context.Context) error {
+	return waitError(ctx, "operation "+p.op.ID)
+}
+
+// waitError returns the error for a done ctx while waiting for what. It wraps
+// ctx.Err() and, when it differs, the context's cause.
+func waitError(ctx context.Context, what string) error {
 	err, cause := ctx.Err(), context.Cause(ctx)
 	if cause != nil && !errors.Is(cause, err) {
-		return fmt.Errorf("bcadmin: waiting for operation %s: %w (cause: %w)", clean(p.op.ID), err, cause)
+		return fmt.Errorf("bcadmin: waiting for %s: %w (cause: %w)", clean(what), err, cause)
 	}
-	return fmt.Errorf("bcadmin: waiting for operation %s: %w", clean(p.op.ID), err)
+	return fmt.Errorf("bcadmin: waiting for %s: %w", clean(what), err)
 }

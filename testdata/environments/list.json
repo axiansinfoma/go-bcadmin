@@ -1,0 +1,41 @@
+{
+  "value": [
+    {
+      "friendlyName": "Production",
+      "type": "Production",
+      "name": "Production",
+      "countryCode": "DE",
+      "applicationFamily": "BusinessCentral",
+      "aadTenantId": "00000000-0000-0000-0000-000000000001",
+      "status": "Active",
+      "webClientLoginUrl": "https://businesscentral.dynamics.com/00000000-0000-0000-0000-000000000001/Production",
+      "webServiceUrl": "https://api.businesscentral.dynamics.com/v2.0/00000000-0000-0000-0000-000000000001/Production",
+      "locationName": "West Europe",
+      "geoName": "Europe",
+      "ringName": "PROD",
+      "appInsightsKey": "",
+      "SoftDeletedOn": null,
+      "HardDeletePendingOn": null,
+      "DeleteReason": "",
+      "AppSourceAppsUpdateCadence": "Default",
+      "versionDetails": {
+        "version": "27.1",
+        "gracePeriodStartDate": "2026-11-01T00:00:00Z",
+        "enforcedUpdatePeriodStartDate": "2026-12-01T00:00:00"
+      }
+    },
+    {
+      "friendlyName": "mysandbox",
+      "type": "Sandbox",
+      "name": "mysandbox",
+      "countryCode": "DE",
+      "applicationFamily": "BusinessCentral",
+      "aadTenantId": "00000000-0000-0000-0000-000000000001",
+      "status": "SoftDeleted",
+      "ringName": "PREVIEW",
+      "SoftDeletedOn": "2026-11-20T10:00:00Z",
+      "HardDeletePendingOn": "2026-12-04T10:00:00Z",
+      "DeleteReason": "requestedByAdmin"
+    }
+  ]
+}
