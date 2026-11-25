@@ -8,11 +8,16 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 
 	"github.com/axiansinfoma/go-bcadmin"
 	"github.com/axiansinfoma/go-bcadmin/bcadmintest"
@@ -460,5 +465,73 @@ func TestAppGetOperationPlainOtherID(t *testing.T) {
 	_, err := srv.NewClient(t).Apps(bc, "sb").GetOperation(context.Background(), appID, "op-1")
 	if !bcadmin.IsNotFound(err) {
 		t.Errorf("error = %v", err)
+	}
+}
+
+// TestInstallPTERetry checks that a PTE upload rejected early with 429 (before
+// the server read the body) is resent completely, and, under -race, that the
+// abandoned attempt and the retry do not share a reader. The server uses TLS:
+// then the client is reliably still writing the body when the 429 arrives.
+func TestInstallPTERetry(t *testing.T) {
+	t.Parallel()
+	content := bytes.Repeat([]byte("0123456789abcdef"), 512<<10) // 8 MiB
+	for name, file := range map[string]func() io.ReadSeeker{
+		"ReaderAt":       func() io.ReadSeeker { return bytes.NewReader(content) },
+		"ReadSeekerOnly": func() io.ReadSeeker { return struct{ io.ReadSeeker }{bytes.NewReader(content)} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			var gotFile []byte
+			var gotLength int64
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					w.Header().Set("Retry-After", "0")
+					bcadmintest.WriteError(w, http.StatusTooManyRequests, "TooManyRequests", "slow down")
+					return
+				}
+				gotLength = r.ContentLength
+				_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				mr := multipart.NewReader(r.Body, params["boundary"])
+				for {
+					p, err := mr.NextPart()
+					if err != nil {
+						if !errors.Is(err, io.EOF) {
+							bcadmintest.WriteError(w, http.StatusBadRequest, "BadMultipart", err.Error())
+							return
+						}
+						break
+					}
+					if p.FormName() == "extensionFile" {
+						gotFile, _ = io.ReadAll(p)
+					}
+				}
+				b, _ := os.ReadFile("testdata/apps/pte-install-operation.json")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(b)
+			}))
+			t.Cleanup(srv.Close)
+			c, err := bcadmin.NewClient(bcadmintest.Credential(), &bcadmin.ClientOptions{ClientOptions: azcore.ClientOptions{
+				Transport: srv.Client(),
+				Retry:     policy.RetryOptions{RetryDelay: time.Millisecond, MaxRetryDelay: 10 * time.Millisecond},
+				Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+					bcadmin.ServiceName: {Endpoint: srv.URL, Audience: "https://bc.example.com"},
+				}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.Apps(bc, "sb").InstallPTE(context.Background(), file(),
+				bcadmin.InstallPTEOptions{FileName: "x.app", AcceptISVEULA: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := calls.Load(); n != 2 {
+				t.Errorf("requests = %d, want 2", n)
+			}
+			if gotLength <= int64(len(content)) || !bytes.Equal(gotFile, content) {
+				t.Errorf("retry: Content-Length %d, file %d bytes, equal %v", gotLength, len(gotFile), bytes.Equal(gotFile, content))
+			}
+		})
 	}
 }

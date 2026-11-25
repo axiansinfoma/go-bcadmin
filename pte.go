@@ -66,8 +66,10 @@ type InstallPTEOptions struct {
 // InstallPTE uploads a per-tenant extension (.app file) and schedules its
 // installation; it returns a poller for the install operation. file is read
 // from its start, whatever its current position, and must not change until
-// the request is done; InstallPTE leaves its position undefined. The file
-// is streamed, not loaded into memory, and may be up to [MaxPTESize] bytes.
+// InstallPTE returns; InstallPTE leaves its position undefined. If file
+// implements io.ReaderAt (as *os.File does), every attempt reads it with
+// ReadAt; otherwise reads are serialized with Seek and Read. The file is
+// streamed, not loaded into memory, and may be up to [MaxPTESize] bytes.
 // Available since API v2.29.
 //
 // With a deployment schedule other than Immediate, the operation stays

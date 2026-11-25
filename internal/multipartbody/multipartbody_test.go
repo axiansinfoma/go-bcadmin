@@ -6,6 +6,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -89,17 +90,17 @@ type shrinking struct {
 	n int64
 }
 
-func (s *shrinking) Read(p []byte) (int, error) {
+func (s *shrinking) ReadAt(p []byte, off int64) (int, error) {
 	if s.n > 0 {
-		pos, _ := s.Seek(0, io.SeekCurrent)
-		if pos >= s.n {
+		if off >= s.n {
 			return 0, io.EOF
 		}
-		if rem := s.n - pos; int64(len(p)) > rem {
-			p = p[:rem]
+		if rem := s.n - off; int64(len(p)) > rem {
+			n, _ := s.Reader.ReadAt(p[:rem], off)
+			return n, io.EOF
 		}
 	}
-	return s.Reader.Read(p)
+	return s.Reader.ReadAt(p, off)
 }
 
 func TestBodyFileNameVerbatim(t *testing.T) {
@@ -115,5 +116,52 @@ func TestBodyFileNameVerbatim(t *testing.T) {
 	want := `Content-Disposition: form-data; name="extensionFile"; filename="Café Müller_1.0.0.0.app"`
 	if !bytes.Contains(raw, []byte(want)) {
 		t.Errorf("body does not contain %q:\n%s", want, raw)
+	}
+}
+
+// TestBodyReaders checks that readers from NewReader are independent of each
+// other, of Body's own offset and of the file position, for files with and
+// without ReadAt. Run with -race.
+func TestBodyReaders(t *testing.T) {
+	t.Parallel()
+	content := bytes.Repeat([]byte("0123456789"), 100000)
+	for name, file := range map[string]io.ReadSeeker{
+		"ReaderAt":       bytes.NewReader(content),
+		"ReadSeekerOnly": struct{ io.ReadSeeker }{bytes.NewReader(content)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b, err := New(nil, "f", "x.app", file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := io.ReadAll(b.NewReader())
+			if err != nil || int64(len(want)) != b.Size() {
+				t.Fatalf("ReadAll = %d bytes, %v; Size() = %d", len(want), err, b.Size())
+			}
+			var wg sync.WaitGroup
+			for range 4 {
+				wg.Go(func() {
+					r := b.NewReader()
+					var got []byte
+					buf := make([]byte, 777)
+					for {
+						n, err := r.Read(buf)
+						got = append(got, buf[:n]...)
+						if err == io.EOF {
+							break
+						}
+						if err != nil {
+							t.Error(err)
+							return
+						}
+					}
+					if !bytes.Equal(got, want) {
+						t.Errorf("reader got %d bytes, different from the first read", len(got))
+					}
+				})
+			}
+			wg.Wait()
+		})
 	}
 }

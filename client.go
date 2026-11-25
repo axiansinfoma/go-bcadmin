@@ -157,6 +157,8 @@ func NewClient(cred azcore.TokenCredential, options *ClientOptions) (*Client, er
 			runtime.NewBearerTokenPolicy(cred, []string{scope}, &policy.BearerTokenOptions{
 				InsecureAllowCredentialWithHTTP: opts.InsecureAllowCredentialWithHTTP,
 			}),
+			// After the bearer policy, which also rewinds the body on a challenge.
+			freshBodyPolicy{},
 		},
 	}, &pipelineOpts)
 

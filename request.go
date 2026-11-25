@@ -369,3 +369,26 @@ func (c *Client) nextLink(link string) (string, error) {
 	}
 	return u.String(), nil
 }
+
+// bodyReaderSource is a request body that can hand out independent readers
+// of itself, such as the multipart body of a PTE upload.
+type bodyReaderSource interface {
+	NewReader() io.ReadCloser
+}
+
+// freshBodyPolicy gives every attempt of a request whose body is a
+// bodyReaderSource its own reader. azcore rewinds and reuses one body for
+// all attempts, but net/http may still be writing the body of an abandoned
+// attempt (for example after an early 429) when the retry starts; separate
+// readers keep the attempts from interfering.
+type freshBodyPolicy struct{}
+
+// Do sets a fresh body reader on the request and sends it.
+func (freshBodyPolicy) Do(req *policy.Request) (*http.Response, error) {
+	if src, ok := req.Body().(bodyReaderSource); ok {
+		raw := req.Raw()
+		raw.Body = src.NewReader()
+		raw.GetBody = func() (io.ReadCloser, error) { return src.NewReader(), nil }
+	}
+	return req.Next()
+}

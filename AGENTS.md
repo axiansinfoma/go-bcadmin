@@ -120,7 +120,12 @@ make check    # tidy, lint, test, vuln
   plain object; `AppsService.GetOperation` also accepts the wrapped list form
   and checks the operation ID in both.
 - The PTE upload body must be seekable (azcore sets Content-Length and
-  rewinds it on retry); never read the file into memory.
+  rewinds it on retry); never read the file into memory. azcore reuses one
+  body object for all attempts while net/http may still be writing an
+  abandoned attempt (early 429), so `freshBodyPolicy` (after the bearer
+  policy) gives each attempt its own reader from `multipartbody.Body.NewReader`,
+  which reads the file with `ReadAt`. `TestInstallPTERetry` (TLS, early 429)
+  catches regressions under `-race`.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no
   tags); check that Renovate proposes updates for it, otherwise bump it by
   hand.
