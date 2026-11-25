@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
@@ -263,6 +264,27 @@ func TestPaginationRefusesForeignHost(t *testing.T) {
 	}
 	if n := len(srv.Requests()); n != 1 {
 		t.Errorf("requests = %d", n)
+	}
+}
+
+func TestPaginationErrorPathIsEscaped(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "environments/operations", http.StatusOK, map[string]any{
+		"value":           []map[string]string{{"id": "1"}},
+		"@odata.nextLink": "/admin/v2.29/x%1B%5B2J%0Afake%E2%80%AE",
+	})
+	srv.Handle(http.MethodGet, "{rest...}", func(w http.ResponseWriter, _ *http.Request) {
+		bcadmintest.WriteJSON(w, http.StatusOK, map[string]any{"value": "not a list"})
+	})
+	_, err := srv.NewClient(t).Tenant().Operations(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "x%1B%5B2J%0Afake%E2%80%AE") {
+		t.Fatalf("error = %v, want the escaped path", err)
+	}
+	for _, r := range err.Error() {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("error %q contains %U", err.Error(), r)
+		}
 	}
 }
 

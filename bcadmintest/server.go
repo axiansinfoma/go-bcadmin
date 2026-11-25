@@ -57,7 +57,8 @@ type Fault struct {
 	// matches every method or path.
 	Method string
 	Path   string
-	// Status is the HTTP status code of the response.
+	// Status is the HTTP status code of the response. An invalid or zero
+	// status is replaced with 500.
 	Status int
 	// Body is the response body, sent as is.
 	Body string
@@ -169,6 +170,9 @@ func (s *Server) Fail(f Fault) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f.Path = strings.TrimPrefix(f.Path, "/")
+	if f.Status < 100 || f.Status > 999 {
+		f.Status = http.StatusInternalServerError
+	}
 	s.faults = append(s.faults, &f)
 }
 

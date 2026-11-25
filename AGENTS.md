@@ -83,13 +83,18 @@ make check    # tidy, lint, test, vuln
   `withNonIdempotent(ctx)` so it gets the same rules.
 - For non-idempotent requests the client's retry options replace per-call
   options from `policy.WithRetryOptions`; azcore offers no way to read them.
-- Without a custom Transport, `newDefaultHTTPClient` refuses cross-origin
-  redirects; 3xx responses that reach `send` become `*ResponseError`.
+- Without a custom Transport, all clients share `sharedHTTPClient` (one
+  pooled transport, `sync.OnceValue`, never modified after creation) to
+  avoid connection churn and SNAT port exhaustion. Never create a transport
+  per client or per request. It refuses cross-origin redirects; 3xx
+  responses that reach `send` become `*ResponseError`.
 - Response bodies are capped by `limitTransport` (`MaxResponseBytes`); the
   error is non-retriable for azcore. azcore reads bodies inside the pipeline,
   and its bearer token policy returns a nil response when a later policy
-  fails, so `tooLargeError` carries the response; `send` uses it to return a
-  `*ResponseError` with status and headers.
+  fails, so `tooLargeError` and `bodyReadError` (any other body read failure)
+  carry the response; `send` uses it to return a `*ResponseError` with status
+  and headers. Error messages show request paths with `EscapedPath()` because
+  paths can come from server-provided nextLinks.
 - `ErrNotFound` matches 404 and the code `EnvironmentNotFound` only; do not
   widen it to every code ending in "NotFound" (some mean "service not found").
 - `@odata.nextLink` must point to the configured endpoint; others are refused

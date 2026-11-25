@@ -115,8 +115,11 @@ func (p *Poller[T]) resultWith(ctx context.Context, opts *WaitOptions) (T, error
 // (a Skipped operation is not an error, see [Poller.Result]),
 // [ErrOperationScheduled] when opts.TreatScheduledAsDone is set and the
 // operation is scheduled, and an error wrapping ctx.Err() (and the context's
-// cause, if one was set) when ctx is done first. In the last case the operation keeps running in Business Central;
-// it can be resumed later with its ID.
+// cause, if one was set) when ctx is done first.
+//
+// Wait keeps polling as long as the operation reports a non-final or unknown
+// status, so give ctx a deadline. When ctx ends first, the operation keeps
+// running in Business Central; it can be resumed later with its ID.
 func (p *Poller[T]) Wait(ctx context.Context, opts *WaitOptions) (T, error) {
 	var zero T
 	freq := p.c.pollFrequency

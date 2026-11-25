@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -20,9 +23,24 @@ const DefaultMaxResponseBytes = 64 << 20
 // ClientOptions.MaxResponseBytes.
 var ErrResponseTooLarge = errors.New("bcadmin: response body too large")
 
-// newDefaultHTTPClient returns the HTTP client used when ClientOptions.Transport
-// is nil. It requires TLS 1.2 and follows redirects only to the same scheme and
-// host, so the bearer token is never forwarded to another origin.
+// Connection pool settings of the default transport. All requests go to one
+// host, so the per-host idle limit is as large as the total limit; Go's
+// default of 2 idle connections per host would close and reopen connections
+// under concurrent load, which can exhaust SNAT ports in Azure.
+const (
+	defaultMaxIdleConns    = 100
+	defaultIdleConnTimeout = 90 * time.Second
+)
+
+// sharedHTTPClient is the HTTP client of all clients created without
+// ClientOptions.Transport. Sharing one connection pool across clients (and
+// across ForTenant clients) keeps the number of outbound connections low. It
+// is created on first use and never modified afterwards.
+var sharedHTTPClient = sync.OnceValue(newDefaultHTTPClient)
+
+// newDefaultHTTPClient returns an HTTP client with a pooled transport. It
+// requires TLS 1.2 and follows redirects only to the same scheme and host, so
+// the bearer token is never forwarded to another origin.
 func newDefaultHTTPClient() *http.Client {
 	var tr *http.Transport
 	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
@@ -31,14 +49,19 @@ func newDefaultHTTPClient() *http.Client {
 		// The application replaced http.DefaultTransport; start from the
 		// standard settings instead of using its transport.
 		tr = &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: time.Second,
 		}
 	}
+	tr.ForceAttemptHTTP2 = true // one multiplexed connection per host where possible
+	tr.MaxIdleConns = defaultMaxIdleConns
+	tr.MaxIdleConnsPerHost = defaultMaxIdleConns
+	tr.IdleConnTimeout = defaultIdleConnTimeout
 	tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	return &http.Client{Transport: tr, CheckRedirect: sameOriginRedirect}
 }
@@ -69,11 +92,15 @@ func (t *limitTransport) Do(req *http.Request) (*http.Response, error) {
 	if err != nil || resp == nil || resp.Body == nil {
 		return resp, err
 	}
+	if t.max >= math.MaxInt64-1 {
+		return resp, nil // effectively unlimited; t.max+1 would overflow
+	}
 	resp.Body = &limitedBody{rc: resp.Body, r: io.LimitReader(resp.Body, t.max+1), max: t.max, resp: resp}
 	return resp, nil
 }
 
 // limitedBody returns ErrResponseTooLarge once more than max bytes were read.
+// Other read errors are wrapped in a *bodyReadError that keeps the response.
 type limitedBody struct {
 	rc   io.ReadCloser
 	r    io.Reader
@@ -94,8 +121,35 @@ func (b *limitedBody) Read(p []byte) (int, error) {
 		b.err = &tooLargeError{max: b.max, resp: b.resp}
 		return n - int(b.read-b.max), b.err
 	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		b.err = &bodyReadError{err: err, resp: b.resp}
+		return n, b.err
+	}
 	return n, err
 }
+
+// responseError is implemented by errors that keep the response whose body
+// could not be read, because azcore's bearer token policy drops the response
+// when a later policy fails.
+type responseError interface {
+	error
+	response() *http.Response
+}
+
+// bodyReadError is a failure while reading a response body, for example a
+// connection reset. It is retried by azcore like the underlying error.
+type bodyReadError struct {
+	err  error
+	resp *http.Response
+}
+
+// Error returns the underlying error's message.
+func (e *bodyReadError) Error() string { return "reading response body: " + e.err.Error() }
+
+// Unwrap returns the underlying error.
+func (e *bodyReadError) Unwrap() error { return e.err }
+
+func (e *bodyReadError) response() *http.Response { return e.resp }
 
 // Close closes the underlying body.
 func (b *limitedBody) Close() error { return b.rc.Close() }
@@ -118,3 +172,5 @@ func (e *tooLargeError) Is(target error) bool { return target == ErrResponseTooL
 
 // NonRetriable marks the error as permanent for the azcore retry policy.
 func (*tooLargeError) NonRetriable() {}
+
+func (e *tooLargeError) response() *http.Response { return e.resp }

@@ -146,6 +146,14 @@ func TestResponseErrorPassThrough(t *testing.T) {
 			wantInError: []string{"Top: top msg (target: x)"},
 		},
 		{
+			name:        "requirement with an unexpected field type",
+			body:        `{"code":"C","message":"M","data":{"requirements":[{"appId":"a","name":"n","version":1}]}}`,
+			status:      http.StatusBadRequest,
+			wantCode:    "C",
+			wantMessage: "M",
+			wantInError: []string{"requirements: n 1 (a)"},
+		},
+		{
 			name:        "wrapped with only innererror",
 			body:        `{"error":{"innererror":{"code":"Deep"}}}`,
 			status:      http.StatusBadRequest,

@@ -144,6 +144,13 @@ Configure it with `ClientOptions.Retry` (the
 The default transport requires TLS 1.2 and follows redirects only within the
 endpoint's scheme and host, so the access token is never sent elsewhere.
 
+All clients created without `ClientOptions.Transport` share one pooled HTTP
+transport (up to 100 idle keep-alive connections, HTTP/2 where available), so
+creating many clients, for example one per tenant, does not open a new
+connection pool each time. This avoids SNAT port exhaustion in Azure. Prefer
+`client.ForTenant` over new clients where possible; it shares everything but
+the token tenant.
+
 ## Configuration
 
 ```go

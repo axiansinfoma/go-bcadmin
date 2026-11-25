@@ -85,10 +85,12 @@ no backports.
   exactly once).
 - **Non-idempotent requests are not repeated.** POST, PATCH, creating PUT
   requests and requests sent with `Client.Do` other than GET, HEAD and OPTIONS
-  are only retried when the service rejected them before processing (429, or
-  503 with `Retry-After`) or the connection could not be established, unless
-  `RetryNonIdempotent` is set.
+  are only retried when the service signals that it did not process them (429,
+  or 503 with `Retry-After`) or the connection could not be established,
+  unless `RetryNonIdempotent` is set.
 - **No secrets in errors.** Error messages contain the request method, path and
   the API's error body, never request headers or tokens. Control and format
   characters in server text are replaced in the messages of `ResponseError`,
-  `OperationError` and poller errors.
+  `OperationError` and poller errors; request paths in error messages are
+  shown percent-encoded. `ResponseError.Header` holds all response headers;
+  avoid logging it as a whole.

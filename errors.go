@@ -178,10 +178,9 @@ func (e *ResponseError) decodeBody() {
 	e.Details = jsonDetails(fields["details"])
 	e.ExtensionData = jsonMap(fields["extensiondata"])
 	e.InnerError = jsonMap(fields["innererror"])
-	if raw, ok := fields["data"]; ok {
-		var d ErrorData
-		if json.Unmarshal(raw, &d) == nil && len(d.Requirements) > 0 {
-			e.Data = &d
+	if data := jsonObject(fields["data"]); data != nil {
+		if reqs := jsonRequirements(data["requirements"]); len(reqs) > 0 {
+			e.Data = &ErrorData{Requirements: reqs}
 		}
 	}
 }
@@ -261,6 +260,30 @@ func jsonDetailsDepth(raw json.RawMessage, depth int) []ErrorDetail {
 		if d.Code != "" || d.Message != "" || d.Target != "" || len(d.ClientErrors) > 0 || len(d.Details) > 0 || len(d.ExtensionData) > 0 {
 			out = append(out, d)
 		}
+	}
+	return out
+}
+
+// jsonRequirements decodes app requirements entry by entry and field by
+// field, so an unexpected value type does not drop the others.
+func jsonRequirements(raw json.RawMessage) []AppRequirement {
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
+		return nil
+	}
+	var out []AppRequirement
+	for _, entry := range entries {
+		f := jsonObject(entry)
+		if f == nil {
+			continue
+		}
+		out = append(out, AppRequirement{
+			AppID:     jsonString(f["appid"]),
+			Name:      jsonString(f["name"]),
+			Publisher: jsonString(f["publisher"]),
+			Version:   jsonString(f["version"]),
+			Type:      jsonString(f["type"]),
+		})
 	}
 	return out
 }
@@ -385,13 +408,14 @@ func writeDetails(b *strings.Builder, label string, details []ErrorDetail) {
 	}
 }
 
-// clean replaces control and format characters (including newlines, terminal
-// escape sequences and bidirectional overrides) with spaces, so
+// clean replaces control, format and line/paragraph separator characters
+// (including newlines, terminal escape sequences and bidirectional overrides)
+// with spaces, so
 // server-provided text cannot garble log output.
 // The fields of ResponseError keep the original text.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return ' '
 		}
 		return r

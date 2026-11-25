@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
@@ -146,26 +147,20 @@ func (c *Client) newRequest(ctx context.Context, method, u string, body any) (*p
 func (c *Client) send(req *policy.Request, out any) error {
 	resp, err := c.pl.Do(req)
 	if err != nil {
-		// The pipeline reads the body, so a body over MaxResponseBytes fails
-		// here; keep the status and headers of the response.
-		if tl, ok := errors.AsType[*tooLargeError](err); ok && tl.resp != nil {
-			resp := tl.resp
-			if resp.StatusCode >= http.StatusMultipleChoices {
-				if resp.Request == nil {
-					resp.Request = req.Raw()
-				}
-				re := newResponseError(resp, nil)
-				re.cause = err
-				return re
+		// The pipeline reads the body, so a body that is too large or cannot be
+		// read fails here; keep the status and headers of the response.
+		if re, ok := errors.AsType[responseError](err); ok {
+			if r := re.response(); r != nil {
+				_ = r.Body.Close()
+				return responseReadError(req, r, err)
 			}
-			return fmt.Errorf("bcadmin: %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.Path, clean(resp.Status), err)
 		}
-		return fmt.Errorf("bcadmin: %s %s: %w", req.Raw().Method, req.Raw().URL.Path, err)
+		return fmt.Errorf("bcadmin: %s %s: %w", req.Raw().Method, req.Raw().URL.EscapedPath(), err)
 	}
 	payload, err := runtime.Payload(resp)
 	_ = resp.Body.Close()
 	if err != nil {
-		return fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.Path, clean(resp.Status), err)
+		return fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.EscapedPath(), clean(resp.Status), err)
 	}
 	// 3xx responses only reach this point when a redirect was refused.
 	if resp.StatusCode >= http.StatusMultipleChoices {
@@ -176,10 +171,25 @@ func (c *Client) send(req *policy.Request, out any) error {
 	}
 	if out != nil && len(bytes.TrimSpace(payload)) > 0 {
 		if err := json.Unmarshal(payload, out); err != nil {
-			return fmt.Errorf("bcadmin: decoding response of %s %s: %w", req.Raw().Method, req.Raw().URL.Path, err)
+			return fmt.Errorf("bcadmin: decoding response of %s %s: %w", req.Raw().Method, req.Raw().URL.EscapedPath(), err)
 		}
 	}
 	return nil
+}
+
+// responseReadError builds the error for a response whose body could not be
+// read: a *ResponseError (wrapping err) for error statuses, otherwise an
+// error naming the status.
+func responseReadError(req *policy.Request, resp *http.Response, err error) error {
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		if resp.Request == nil {
+			resp.Request = req.Raw()
+		}
+		re := newResponseError(resp, nil)
+		re.cause = err
+		return re
+	}
+	return fmt.Errorf("bcadmin: %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.EscapedPath(), clean(resp.Status), err)
 }
 
 func idempotent(method string) bool {
@@ -228,9 +238,12 @@ func hasRetryAfter(h http.Header) bool {
 // isConnectError reports whether err happened while establishing the
 // connection, so the request cannot have reached the service.
 func isConnectError(err error) bool {
-	var opErr *net.OpError
-	if errors.As(err, &opErr) && opErr.Op == "dial" {
-		return true
+	// Walk the chain: a failed proxy connection is an OpError "proxyconnect"
+	// wrapping the "dial" OpError.
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if opErr, ok := e.(*net.OpError); ok && (opErr.Op == "dial" || opErr.Op == "proxyconnect") { //nolint:errorlint // the loop unwraps the chain itself
+			return true
+		}
 	}
 	var dnsErr *net.DNSError
 	return errors.As(err, &dnsErr)
@@ -311,6 +324,31 @@ func listAll[T any](ctx context.Context, c *Client, template string, segments ..
 	return items, nil
 }
 
+// asciiEqualFold compares a and b case-insensitively for ASCII letters only;
+// strings with other non-ASCII characters never match, so Unicode case
+// folding cannot make two different hosts compare equal.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if ca >= utf8.RuneSelf || cb >= utf8.RuneSelf {
+			return false
+		}
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
+}
+
 // nextLink validates an @odata.nextLink value. It must point to the same
 // scheme and host as the client's endpoint so the bearer token is never sent
 // elsewhere.
@@ -326,7 +364,7 @@ func (c *Client) nextLink(link string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("bcadmin: invalid @odata.nextLink %q: %w", link, err)
 	}
-	if !strings.EqualFold(u.Scheme, c.baseURL.Scheme) || !strings.EqualFold(u.Host, c.baseURL.Host) {
+	if !asciiEqualFold(u.Scheme, c.baseURL.Scheme) || !asciiEqualFold(u.Host, c.baseURL.Host) {
 		return "", fmt.Errorf("bcadmin: refusing @odata.nextLink to %q, which is not the API endpoint", clean(u.Scheme+"://"+u.Host))
 	}
 	return u.String(), nil

@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -204,6 +206,100 @@ func assertClean(t *testing.T, s string) {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			t.Errorf("error %q contains %U", s, r)
 		}
+	}
+}
+
+func TestSharedPooledTransport(t *testing.T) {
+	t.Parallel()
+	c1, err := NewClient(fakeCred{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := NewClient(fakeCred{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c3, err := c1.ForTenant("00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := sharedHTTPClient()
+	for i, c := range []*Client{c1, c2, c3} {
+		if c.options.Transport != shared {
+			t.Errorf("client %d does not use the shared HTTP client", i+1)
+		}
+	}
+	tr := shared.Transport.(*http.Transport)
+	if tr.MaxIdleConnsPerHost != defaultMaxIdleConns || tr.MaxIdleConns != defaultMaxIdleConns || !tr.ForceAttemptHTTP2 {
+		t.Errorf("pool settings: MaxIdleConns %d, MaxIdleConnsPerHost %d, HTTP/2 %v", tr.MaxIdleConns, tr.MaxIdleConnsPerHost, tr.ForceAttemptHTTP2)
+	}
+	if tr.TLSClientConfig.MinVersion != tls.VersionTLS12 || shared.CheckRedirect == nil {
+		t.Error("shared client lost TLS or redirect settings")
+	}
+}
+
+func TestNextLinkHostComparison(t *testing.T) {
+	t.Parallel()
+	c, err := NewClient(fakeCred{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.nextLink("HTTPS://API.BusinessCentral.Dynamics.com/admin/v2.29/x"); err != nil {
+		t.Errorf("same host in other case refused: %v", err)
+	}
+	// U+212A KELVIN SIGN folds to "k" under Unicode rules; it must not match.
+	if _, err := c.nextLink("https://api.businesscentral.dynamics.\u212aom/x"); err == nil {
+		t.Error("non-ASCII host accepted")
+	}
+}
+
+func TestUnlimitedResponseSize(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t, srv, func(o *ClientOptions) { o.MaxResponseBytes = math.MaxInt64 })
+	var out struct{ OK bool }
+	if err := c.Do(context.Background(), http.MethodGet, "x", nil, &out); err != nil || !out.OK {
+		t.Errorf("Do() = %v, %+v", err, out)
+	}
+}
+
+func TestTruncatedErrorBodyKeepsStatus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, buf, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 409 Conflict\r\nContent-Length: 500\r\nRequest-Id: rid-2\r\n\r\n{\"code\":\"EnvironmentExists\"")
+		_ = buf.Flush()
+	}))
+	t.Cleanup(srv.Close)
+	tr := srv.Client().Transport.(*http.Transport).Clone()
+	tr.ForceAttemptHTTP2 = false
+	tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		c := newTestClient(t, srv, func(o *ClientOptions) { o.Transport = &http.Client{Transport: tr}; o.Retry.MaxRetries = -1 })
+		err := c.Do(context.Background(), method, "x", nil, nil)
+		re, ok := errors.AsType[*ResponseError](err)
+		if !ok || re.StatusCode != http.StatusConflict || re.RequestID != "rid-2" || !IsConflict(err) {
+			t.Errorf("%s: error = %v, want *ResponseError with 409", method, err)
+		}
+	}
+}
+
+func TestIsConnectErrorProxy(t *testing.T) {
+	t.Parallel()
+	dial := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	if !isConnectError(&net.OpError{Op: "proxyconnect", Net: "tcp", Err: dial}) {
+		t.Error("proxyconnect wrapping dial is not a connect error")
+	}
+	if isConnectError(&net.OpError{Op: "read", Net: "tcp", Err: errors.New("reset")}) {
+		t.Error("read error is a connect error")
 	}
 }
 

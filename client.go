@@ -50,9 +50,11 @@ var apiVersionPattern = regexp.MustCompile(`^v\d+\.\d+$`)
 //     RetryNonIdempotent for POST and PATCH requests.
 //   - Telemetry.ApplicationID is added to the User-Agent header.
 //   - Transport, Logging, PerCallPolicies and PerRetryPolicies work as in
-//     the Azure SDK for Go. The default transport requires TLS 1.2 and
-//     follows redirects only to the same scheme and host; a custom Transport
-//     is responsible for its own redirect policy.
+//     the Azure SDK for Go. The default transport is shared by all clients
+//     of the process, pools up to 100 idle connections, prefers HTTP/2,
+//     requires TLS 1.2 and follows redirects only to the same scheme and
+//     host; a custom Transport is responsible for its own pooling and
+//     redirect policy.
 //   - InsecureAllowCredentialWithHTTP allows an http:// endpoint, which sends
 //     the bearer token in clear text. Use it only for tests.
 type ClientOptions struct {
@@ -138,8 +140,8 @@ func NewClient(cred azcore.TokenCredential, options *ClientOptions) (*Client, er
 
 	scope := strings.TrimRight(audience, "/") + "/.default"
 	if opts.Transport == nil {
-		// Keep the default client in opts so ForTenant shares its connections.
-		opts.Transport = newDefaultHTTPClient()
+		// All clients without their own transport share one connection pool.
+		opts.Transport = sharedHTTPClient()
 	}
 	maxResponse := opts.MaxResponseBytes
 	if maxResponse <= 0 {
