@@ -85,7 +85,7 @@ type ResponseError struct {
 	Status string
 	// Method is the HTTP method of the request.
 	Method string
-	// Path is the URL path of the request, without query parameters.
+	// Path is the escaped URL path of the request, without query parameters.
 	Path string
 	// RequestID is the value of the first of the response headers
 	// "request-id", "x-ms-request-id", "ms-correlation-x-ms-id" and
@@ -138,7 +138,7 @@ func newResponseError(resp *http.Response, body []byte) *ResponseError {
 	if resp.Request != nil {
 		e.Method = resp.Request.Method
 		if resp.Request.URL != nil {
-			e.Path = resp.Request.URL.Path
+			e.Path = resp.Request.URL.EscapedPath()
 		}
 	}
 	for _, h := range []string{"request-id", "x-ms-request-id", "ms-correlation-x-ms-id", "x-ms-correlation-id"} {
@@ -420,6 +420,25 @@ func clean(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// cleanError hides control and format characters in the message of an error
+// that may contain server-provided text (for example from azcore or
+// encoding/json), while keeping it available to errors.Is and errors.As.
+type cleanError struct{ err error }
+
+// Error returns the wrapped error's message with clean applied.
+func (e *cleanError) Error() string { return clean(e.err.Error()) }
+
+// Unwrap returns the wrapped error.
+func (e *cleanError) Unwrap() error { return e.err }
+
+// cleanErr wraps err in a *cleanError.
+func cleanErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &cleanError{err: err}
 }
 
 // Is reports whether the error matches one of the sentinels [ErrNotFound],

@@ -288,6 +288,41 @@ func TestPaginationErrorPathIsEscaped(t *testing.T) {
 	}
 }
 
+func TestAuthChallengeTextIsCleaned(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.Fail(bcadmintest.Fault{Path: "environments/quotas", Status: http.StatusUnauthorized, Header: http.Header{
+		"Www-Authenticate": {"Bearer error=\"insufficient_claims\", claims=\"not\u202ebase64\u009b\""},
+	}})
+	_, err := srv.NewClient(t).Tenant().Quotas(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "invalid claims") {
+		t.Fatalf("error = %v, want azcore's invalid claims error", err)
+	}
+	for _, r := range err.Error() {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("error %q contains %U", err.Error(), r)
+		}
+	}
+}
+
+func TestPaginationStopTextIsCleaned(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "environments/operations", http.StatusOK, map[string]any{
+		"value":           []map[string]string{{"id": "1"}},
+		"@odata.nextLink": "/admin/v2.29/environments/operations?a=\u202e",
+	})
+	_, err := srv.NewClient(t).Tenant().Operations(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "already visited") {
+		t.Fatalf("error = %v", err)
+	}
+	for _, r := range err.Error() {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("error %q contains %U", err.Error(), r)
+		}
+	}
+}
+
 func TestPaginationLoop(t *testing.T) {
 	t.Parallel()
 	srv := bcadmintest.NewServer(t)

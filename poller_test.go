@@ -127,7 +127,7 @@ func TestPollerContext(t *testing.T) {
 	defer cancel(nil)
 	stop := errors.New("test stop")
 	go func() {
-		for calls.Load() < 2 {
+		for calls.Load() < 2 && ctx.Err() == nil {
 			time.Sleep(time.Millisecond)
 		}
 		cancel(stop)

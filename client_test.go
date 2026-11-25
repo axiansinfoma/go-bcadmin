@@ -144,7 +144,7 @@ func TestUserAgentAndHeaders(t *testing.T) {
 	}
 	req, _ := srv.LastRequest()
 	ua := req.Header.Get("User-Agent")
-	if !strings.HasPrefix(ua, "my-tool/1.0 ") || !strings.Contains(ua, "go-bcadmin/") {
+	if !strings.HasPrefix(ua, "my-tool/1.0 ") || !strings.Contains(ua, "azsdk-go-bcadmin/") {
 		t.Errorf("User-Agent = %q", ua)
 	}
 	if req.Header.Get("Accept") != "application/json" {

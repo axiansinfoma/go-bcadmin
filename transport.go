@@ -8,7 +8,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -62,7 +61,16 @@ func newDefaultHTTPClient() *http.Client {
 	tr.MaxIdleConns = defaultMaxIdleConns
 	tr.MaxIdleConnsPerHost = defaultMaxIdleConns
 	tr.IdleConnTimeout = defaultIdleConnTimeout
-	tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	// Keep TLS settings the application put on http.DefaultTransport (root
+	// CAs, client certificates); only raise the minimum version.
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	} else {
+		tr.TLSClientConfig = tr.TLSClientConfig.Clone()
+	}
+	if tr.TLSClientConfig.MinVersion < tls.VersionTLS12 {
+		tr.TLSClientConfig.MinVersion = tls.VersionTLS12
+	}
 	return &http.Client{Transport: tr, CheckRedirect: sameOriginRedirect}
 }
 
@@ -74,7 +82,7 @@ func sameOriginRedirect(req *http.Request, via []*http.Request) error {
 		return errors.New("bcadmin: stopped after 10 redirects")
 	}
 	first := via[0].URL
-	if req.URL.Scheme != first.Scheme || !strings.EqualFold(req.URL.Host, first.Host) {
+	if !asciiEqualFold(req.URL.Scheme, first.Scheme) || !asciiEqualFold(req.URL.Host, first.Host) {
 		return http.ErrUseLastResponse
 	}
 	return nil

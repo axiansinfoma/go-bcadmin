@@ -14,8 +14,9 @@ const (
 	// in the build information of the program.
 	modulePath = "github.com/axiansinfoma/go-bcadmin"
 
-	// moduleName is the name reported in the User-Agent header.
-	moduleName = "go-bcadmin"
+	// moduleName is the name reported in the User-Agent header; azcore
+	// formats it as "azsdk-go-bcadmin/<version>".
+	moduleName = "bcadmin"
 )
 
 // moduleVersion returns the version of this module as recorded in the build

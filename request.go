@@ -155,12 +155,12 @@ func (c *Client) send(req *policy.Request, out any) error {
 				return responseReadError(req, r, err)
 			}
 		}
-		return fmt.Errorf("bcadmin: %s %s: %w", req.Raw().Method, req.Raw().URL.EscapedPath(), err)
+		return cleanErr(fmt.Errorf("bcadmin: %s %s: %w", req.Raw().Method, req.Raw().URL.EscapedPath(), err))
 	}
 	payload, err := runtime.Payload(resp)
 	_ = resp.Body.Close()
 	if err != nil {
-		return fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.EscapedPath(), clean(resp.Status), err)
+		return cleanErr(fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.EscapedPath(), clean(resp.Status), err))
 	}
 	// 3xx responses only reach this point when a redirect was refused.
 	if resp.StatusCode >= http.StatusMultipleChoices {
@@ -171,7 +171,7 @@ func (c *Client) send(req *policy.Request, out any) error {
 	}
 	if out != nil && len(bytes.TrimSpace(payload)) > 0 {
 		if err := json.Unmarshal(payload, out); err != nil {
-			return fmt.Errorf("bcadmin: decoding response of %s %s: %w", req.Raw().Method, req.Raw().URL.EscapedPath(), err)
+			return cleanErr(fmt.Errorf("bcadmin: decoding response of %s %s: %w", req.Raw().Method, req.Raw().URL.EscapedPath(), err))
 		}
 	}
 	return nil
@@ -189,7 +189,7 @@ func responseReadError(req *policy.Request, resp *http.Response, err error) erro
 		re.cause = err
 		return re
 	}
-	return fmt.Errorf("bcadmin: %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.EscapedPath(), clean(resp.Status), err)
+	return cleanErr(fmt.Errorf("bcadmin: %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.EscapedPath(), clean(resp.Status), err))
 }
 
 func idempotent(method string) bool {
@@ -289,7 +289,7 @@ func list[T any](ctx context.Context, c *Client, template string, segments ...st
 		visited := map[string]bool{}
 		for next != "" {
 			if visited[next] || len(visited) >= maxPages {
-				yield(zero, fmt.Errorf("bcadmin: stopping pagination at %s: link was already visited or more than %d pages", next, maxPages))
+				yield(zero, cleanErr(fmt.Errorf("bcadmin: stopping pagination at %s: link was already visited or more than %d pages", next, maxPages)))
 				return
 			}
 			visited[next] = true
