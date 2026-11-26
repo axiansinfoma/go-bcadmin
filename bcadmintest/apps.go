@@ -38,7 +38,13 @@ import (
 // the request asked for that (never downgrading an app) and fails
 // otherwise; an uninstall fails if other apps now depend on the app and the
 // request did not ask to uninstall dependents, and is Skipped if the app is
-// gone. A PTE upload older than the installed version is refused.
+// gone; an update of an app that was uninstalled meanwhile fails. A PTE
+// upload older than the installed version is refused. Uninstalling with
+// uninstallDependents is refused (or fails when it runs) if a dependent is
+// protected (CanBeUninstalled false) or has its own operation in progress.
+// Apps installed or updated as dependencies of another operation keep their
+// own lastOperationId and result, and their UpdatePending state while their
+// own update is pending.
 //
 // Operations carry both version pairs (sourceAppVersion/targetAppVersion and
 // sourceVersion/targetVersion), as the different app endpoints return one or
@@ -215,9 +221,12 @@ func (a *Apps) Operations(family, environment string) []bcadmin.Operation {
 	return out
 }
 
-// RunScheduled releases the scheduled operations of the environment
-// family/environment, as the update window or a platform update would: they
-// then run and finish like other operations.
+// RunScheduled releases all scheduled operations of the environment
+// family/environment (any schedule kind), as the update window or a platform
+// update would. Released operations keep status Scheduled until their
+// single operation is requested; then they run and finish like other
+// operations. Released PTE installs are no longer listed by
+// scheduledPteOperations and can no longer be canceled.
 func (a *Apps) RunScheduled(family, environment string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -494,6 +503,10 @@ func (a *Apps) advance(o *appOperation) {
 			a.failOperation(o, "The app cannot be uninstalled because other apps depend on it: "+appNames(deps))
 			return
 		}
+		if _, msg := a.uninstallBlocked(o.env, deps); msg != "" {
+			a.failOperation(o, msg)
+			return
+		}
 		o.op.Status = bcadmin.OperationStatusSucceeded
 		for _, d := range deps {
 			delete(apps, strings.ToLower(d.AppID))
@@ -501,10 +514,15 @@ func (a *Apps) advance(o *appOperation) {
 		delete(apps, key)
 		return
 	}
+	if o.kind == "update" && apps[key] == nil {
+		a.failOperation(o, "The app is not installed.")
+		return
+	}
 	if inst := apps[key]; inst != nil && compareVersions(inst.Version, o.app.Version) >= 0 {
 		// The same or a newer version is installed already.
 		o.op.Status = bcadmin.OperationStatusSkipped
 		inst.State = bcadmin.AppStateInstalled
+		setResult(inst, o, "Skipped")
 		return
 	}
 	reqs, fix, ok := a.missing(o.env, o.app)
@@ -518,9 +536,9 @@ func (a *Apps) advance(o *appOperation) {
 	}
 	o.op.Status = bcadmin.OperationStatusSucceeded
 	for _, d := range fix {
-		a.put(apps, d, false, o)
+		a.put(apps, d, false, true, o)
 	}
-	a.put(apps, o.app, o.pte, o)
+	a.put(apps, o.app, o.pte, false, o)
 }
 
 // failOperation ends o with status Failed and message, without changing the
@@ -543,8 +561,10 @@ func appNames(apps []bcadmin.InstalledApp) string {
 	return strings.Join(parts, ", ")
 }
 
-// put installs app in apps or updates it. a.mu must be held.
-func (a *Apps) put(apps map[string]*bcadmin.InstalledApp, app App, pte bool, o *appOperation) {
+// put installs app in apps or updates it as the result of o. For a
+// dependency (dep), the app's own last operation fields are kept, and so
+// is its state while it has its own pending operation. a.mu must be held.
+func (a *Apps) put(apps map[string]*bcadmin.InstalledApp, app App, pte, dep bool, o *appOperation) {
 	key := strings.ToLower(app.AppID)
 	inst := apps[key]
 	if inst == nil {
@@ -552,10 +572,16 @@ func (a *Apps) put(apps map[string]*bcadmin.InstalledApp, app App, pte bool, o *
 		if pte {
 			typ = bcadmin.AppTypeTenant
 		}
-		inst = &bcadmin.InstalledApp{AppID: app.AppID, AppType: typ, CanBeUninstalled: true}
+		inst = &bcadmin.InstalledApp{AppID: app.AppID, AppType: typ, CanBeUninstalled: true, State: bcadmin.AppStateInstalled}
 		apps[key] = inst
 	}
 	inst.Name, inst.Publisher, inst.Version = app.Name, app.Publisher, app.Version
+	if dep {
+		if !a.busy(o.env, app.AppID, true) {
+			inst.State = bcadmin.AppStateInstalled
+		}
+		return
+	}
 	inst.State = bcadmin.AppStateInstalled
 	setResult(inst, o, "Succeeded")
 }
@@ -747,6 +773,14 @@ func (a *Apps) handleUninstall(w http.ResponseWriter, r *http.Request) {
 			reqs = append(reqs, bcadmin.AppRequirement{AppID: d.AppID, Name: d.Name, Publisher: d.Publisher, Version: d.Version, Type: "Uninstall"})
 		}
 		requirementsError(w, "The app cannot be uninstalled because other apps depend on it.", reqs)
+		return
+	}
+	if status, msg := a.uninstallBlocked(key, deps); msg != "" {
+		code := "appCannotBeUninstalled"
+		if status == http.StatusConflict {
+			code = "appOperationInProgress"
+		}
+		WriteError(w, status, code, msg)
 		return
 	}
 	app := App{AppID: inst.AppID, Name: inst.Name, Publisher: inst.Publisher, Version: inst.Version}
@@ -992,4 +1026,20 @@ func canonical(v, def string, allowed ...string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// uninstallBlocked reports why the dependents deps cannot be uninstalled
+// with the app: one is protected (CanBeUninstalled false, 400) or has its
+// own operation in progress (409). msg is empty when they can. a.mu must be
+// held.
+func (a *Apps) uninstallBlocked(key string, deps []bcadmin.InstalledApp) (status int, msg string) {
+	for _, d := range deps {
+		if !d.CanBeUninstalled {
+			return http.StatusBadRequest, "the dependent app " + appNames([]bcadmin.InstalledApp{d}) + " cannot be uninstalled"
+		}
+		if a.busy(key, d.AppID, true) {
+			return http.StatusConflict, "another operation on the dependent app " + appNames([]bcadmin.InstalledApp{d}) + " is in progress"
+		}
+	}
+	return 0, ""
 }

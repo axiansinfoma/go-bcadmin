@@ -665,4 +665,109 @@ func TestAppsFakeVersionMatching(t *testing.T) {
 	if _, err := p.Wait(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
+	if _, ok := installed(t, fake)[selfID]; !ok {
+		t.Error("an app that depends on itself was not installed")
+	}
+}
+
+// TestAppsFakeUninstallInteractions checks uninstalls that interact with
+// other operations and protected apps.
+func TestAppsFakeUninstallInteractions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	seed := func(t *testing.T) (*bcadmintest.Apps, *bcadmin.AppsService) {
+		t.Helper()
+		fake, apps := newAppsFake(t)
+		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
+		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0", CanBeUninstalled: true})
+		return fake, apps
+	}
+
+	t.Run("dependent with a pending update", func(t *testing.T) {
+		t.Parallel()
+		fake, apps := seed(t)
+		if _, err := apps.Update(ctx, connectorID, bcadmin.UpdateAppOptions{TargetVersion: "2.2.0.0", UseEnvironmentUpdateWindow: true, InstallOrUpdateNeededDependencies: true}); err != nil {
+			t.Fatal(err)
+		}
+		// Removing the connector as a dependent would leave its update
+		// without an app; the fake refuses, as for the app itself.
+		if _, err := apps.Uninstall(ctx, baseID, bcadmin.UninstallAppOptions{UninstallDependents: true}); bcadmin.ErrorCode(err) != "appOperationInProgress" {
+			t.Errorf("uninstall with a busy dependent: %v", err)
+		}
+		if n := len(installed(t, fake)); n != 2 {
+			t.Errorf("installed %d apps, want 2", n)
+		}
+	})
+	t.Run("scheduled uninstall whose dependent became busy", func(t *testing.T) {
+		t.Parallel()
+		fake, apps := seed(t)
+		u, err := apps.Uninstall(ctx, baseID, bcadmin.UninstallAppOptions{UninstallDependents: true, UseEnvironmentUpdateWindow: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := apps.Update(ctx, connectorID, bcadmin.UpdateAppOptions{TargetVersion: "2.2.0.0", UseEnvironmentUpdateWindow: true, InstallOrUpdateNeededDependencies: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.RunScheduled(bcadmin.FamilyBusinessCentral, "sb")
+		// The uninstall finishes first and fails: its dependent, the
+		// connector, has its own operation in progress.
+		var oe *bcadmin.OperationError
+		if _, err := u.Wait(ctx, nil); !errors.As(err, &oe) || !strings.Contains(oe.Operation.ErrorMessage, "in progress") {
+			t.Errorf("scheduled uninstall with a busy dependent: %v", err)
+		}
+		if _, err := p.Wait(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+		got := installed(t, fake)
+		if got[connectorID].Version != "2.2.0.0" || got[baseID].Version != "1.5.0.0" {
+			t.Errorf("installed = %+v", got)
+		}
+	})
+	t.Run("protected dependent", func(t *testing.T) {
+		t.Parallel()
+		fake, apps := newAppsFake(t)
+		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
+		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
+		if _, err := apps.Uninstall(ctx, baseID, bcadmin.UninstallAppOptions{UninstallDependents: true}); bcadmin.ErrorCode(err) != "appCannotBeUninstalled" {
+			t.Errorf("uninstall with a protected dependent: %v", err)
+		}
+		if n := len(installed(t, fake)); n != 2 {
+			t.Errorf("installed %d apps, want 2", n)
+		}
+	})
+}
+
+// TestAppsFakeResults checks the result fields of skipped operations and of
+// apps changed as dependencies.
+func TestAppsFakeResults(t *testing.T) {
+	t.Parallel()
+	fake, apps := newAppsFake(t)
+	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0"})
+	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
+	ctx := context.Background()
+	baseUpdate, err := apps.Update(ctx, baseID, bcadmin.UpdateAppOptions{TargetVersion: "1.5.0.0", UseEnvironmentUpdateWindow: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := apps.Update(ctx, connectorID, bcadmin.UpdateAppOptions{TargetVersion: "2.2.0.0", InstallOrUpdateNeededDependencies: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Wait(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	base := installed(t, fake)[baseID]
+	if base.Version != "1.5.0.0" || !base.State.Is(bcadmin.AppStateUpdatePending) || base.LastOperationID == p.ID() {
+		t.Errorf("base after a dependency update = %+v", base)
+	}
+	fake.RunScheduled(bcadmin.FamilyBusinessCentral, "sb")
+	op, err := baseUpdate.Wait(ctx, nil)
+	if err != nil || !op.Status.Is(bcadmin.OperationStatusSkipped) {
+		t.Fatalf("scheduled base update = %+v, %v", op, err)
+	}
+	base = installed(t, fake)[baseID]
+	if base.LastOperationID != op.ID || base.LastUpdateAttemptResult != "Skipped" || !base.State.Is(bcadmin.AppStateInstalled) {
+		t.Errorf("base after skipped update = %+v", base)
+	}
 }
