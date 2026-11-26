@@ -258,6 +258,14 @@ envs := srv.EnableEnvironments()
 envs.Add(bcadmin.Environment{Name: "Production", Type: bcadmin.EnvironmentTypeProduction})
 envs.FailNextOperation("simulated failure")
 
+// A stateful fake of the app endpoints: a catalog of published versions with
+// dependencies, installed apps per environment, scheduled operations and
+// PTE uploads (identified by file name).
+apps := srv.EnableApps()
+apps.Publish(bcadmintest.App{AppID: appID, Name: "Contoso Connector", Version: "2.0.0.0"})
+apps.AddPTEFile("Contoso_MyApp_1.0.0.0.app", bcadmintest.App{AppID: pteID, Name: "My App", Version: "1.0.0.0"})
+apps.RunScheduled(bcadmin.FamilyBusinessCentral, "uat") // run operations scheduled for the update window
+
 // Or handlers for single endpoints.
 srv.HandleJSON(http.MethodGet, "environments/quotas", http.StatusOK, map[string]any{
 	"environmentsCount": map[string]int{"production": 1, "sandbox": 3},

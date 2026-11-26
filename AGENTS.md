@@ -19,7 +19,7 @@ Business Central Administration Center API. Read README.md for the user view.
 | `environment.go` | The `Environment` object; its methods delegate to `EnvironmentsService`. |
 | `time.go` | `Time`, a tolerant timestamp type; use `*Time` for all timestamps in responses. |
 | `version.go` | `DefaultAPIVersion`; module version for the User-Agent from build info. |
-| `bcadmintest/` | Public fake API server for tests (ours and users'); `environments.go` is a stateful fake of the environment endpoints. |
+| `bcadmintest/` | Public fake API server for tests (ours and users'); `environments.go` and `apps.go` are stateful fakes of the environment and app endpoints. |
 | `internal/pathutil/` | Path segment validation and escaping. |
 | `testdata/` | JSON fixtures, based on the samples in the Microsoft Learn docs. |
 
@@ -139,6 +139,11 @@ make check    # tidy, lint, test, vuln
   hand.
 - `bcadmintest` patterns use `http.ServeMux` syntax; `applications/` needs
   `applications/{$}` to match only that path.
+- The stateful fakes in `bcadmintest` follow the documented behavior and
+  error codes; where the docs name none, they use their own codes, listed in
+  the type's doc comment. Keep that list current when adding checks. The
+  apps fake identifies PTE uploads by file name (`AddPTEFile`) because it
+  cannot read .app files.
 - This repository is public. Never add tenant IDs, environment or customer
   names, internal URLs, email addresses or secrets to code, tests, fixtures,
   commit messages or PR descriptions. Test data uses placeholder GUIDs
