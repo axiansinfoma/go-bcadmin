@@ -109,10 +109,12 @@ type Operation struct {
 	// ProductFamily is the application family, for example "BusinessCentral".
 	ProductFamily string `json:"productFamily,omitempty"`
 
-	// The following fields are returned by the app management operation
-	// endpoints (apps/{appId}/operations). The environment operation lists
-	// return the same information in Parameters ("appId",
-	// "targetAppVersion", ...).
+	// The following fields are returned by the app management endpoints:
+	// install, update and uninstall responses and the PTE endpoints use
+	// AppID, SourceAppVersion and TargetAppVersion; the app operation lists
+	// (apps/{appId}/operations) return the app versions in SourceVersion and
+	// TargetVersion. The environment operation lists return the same
+	// information in Parameters ("appId", "targetAppVersion", ...).
 
 	// AppID is the app of an app operation.
 	AppID string `json:"appId,omitempty"`
@@ -120,9 +122,11 @@ type Operation struct {
 	SourceAppVersion string `json:"sourceAppVersion,omitempty"`
 	// TargetAppVersion is the app version after an app operation.
 	TargetAppVersion string `json:"targetAppVersion,omitempty"`
-	// SourceVersion is the platform/application version before the operation.
+	// SourceVersion is the version before the operation: the application
+	// version for environment updates, the app version in app operation lists.
 	SourceVersion string `json:"sourceVersion,omitempty"`
-	// TargetVersion is the platform/application version after the operation.
+	// TargetVersion is the version after the operation: the application
+	// version for environment updates, the app version in app operation lists.
 	TargetVersion string `json:"targetVersion,omitempty"`
 	// ScheduleKind tells when a scheduled operation runs, for example
 	// "UpdateWindow" or "NextMinorUpdate".
