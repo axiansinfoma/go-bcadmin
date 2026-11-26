@@ -74,8 +74,8 @@ func (t OperationType) Is(other OperationType) bool {
 
 // Operation is a long-running operation as returned by the API: for an
 // environment (create, copy, delete, rename, restore, update, ...), for an
-// app (install, update, uninstall) or for an environment transfer. Fields that do not apply to an operation
-// are empty.
+// app (install, update, uninstall) or for an environment transfer. Fields
+// that do not apply to an operation are empty.
 type Operation struct {
 	// ID is the operation ID.
 	ID string `json:"id"`

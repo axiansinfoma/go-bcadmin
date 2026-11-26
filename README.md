@@ -236,18 +236,11 @@ if res.CreationStatus.Is(bcadmin.OutageReportError) {
 
 ```go
 // Move an environment to another Microsoft Entra tenant: request it on the
-// source tenant, accept it on the destination tenant (internal
-// administrators only).
-src, err := client.ForTenant(sourceTenantID)
-if err != nil {
-	return err
-}
+// source tenant, accept it on the destination tenant. Both calls need an
+// internal administrator of that tenant, so src and dst are usually clients
+// with different user credentials (bcadmin.NewClient per tenant).
 if _, err := src.Transfers().RequestOutgoing(ctx, bcadmin.FamilyBusinessCentral, "uat",
 	bcadmin.OutgoingTransferOptions{DestinationEntraTenantID: destTenantID, RunAt: time.Now().Add(24 * time.Hour)}); err != nil {
-	return err
-}
-dst, err := client.ForTenant(destTenantID)
-if err != nil {
 	return err
 }
 if _, err := dst.Transfers().AcceptIncoming(ctx, bcadmin.IncomingTransfer{

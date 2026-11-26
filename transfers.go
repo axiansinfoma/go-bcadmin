@@ -71,8 +71,8 @@ func (s *TransfersService) RequestOutgoing(ctx context.Context, family, environm
 
 // CancelOutgoing cancels the pending transfer of the environment
 // family/environment and returns the canceled operation, or nil if a
-// successful response has no readable operation. The call must be authenticated on the source tenant.
-// Available since API v2.20.
+// successful response has no readable operation. The call must be
+// authenticated on the source tenant. Available since API v2.20.
 //
 // DELETE /transfers/outgoing/applications/{applicationFamily}/environments/{environmentName}.
 func (s *TransfersService) CancelOutgoing(ctx context.Context, family, environment string) (*Operation, error) {

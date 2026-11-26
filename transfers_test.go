@@ -70,6 +70,7 @@ func TestTransfers(t *testing.T) {
 	if got := lastBody(t, srv); !reflect.DeepEqual(got, want) {
 		t.Errorf("accept body = %v, want %v", got, want)
 	}
+	findRequest(t, srv, http.MethodPost, "/admin/v2.29/transfers/incoming")
 }
 
 func TestTransfersValidation(t *testing.T) {
