@@ -157,7 +157,7 @@ func TestAppsFakeUpdate(t *testing.T) {
 	if _, err := apps.CancelUpdate(ctx, connectorID, p.ID()); bcadmin.ErrorCode(err) != "operationNotScheduled" {
 		t.Errorf("second CancelUpdate: %v", err)
 	}
-	if a := installed(t, fake)[connectorID]; a.Version != "2.0.0.0" || !a.State.Is(bcadmin.AppStateInstalled) {
+	if a := installed(t, fake)[connectorID]; a.Version != "2.0.0.0" || !a.State.Is(bcadmin.AppStateInstalled) || a.LastUpdateAttemptResult != "Canceled" {
 		t.Errorf("after cancel = %+v", a)
 	}
 
@@ -526,5 +526,143 @@ func TestAppsFakeScheduledPTEVersions(t *testing.T) {
 	msg, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(msg), "extensionFile is required") {
 		t.Errorf("upload without file name: %d %s", resp.StatusCode, msg)
+	}
+}
+
+// TestAppsFakePTEDowngrade checks that the fake never installs an older PTE
+// version over a newer one.
+func TestAppsFakePTEDowngrade(t *testing.T) {
+	t.Parallel()
+	fake, apps := newAppsFake(t)
+	for _, v := range []string{"1.0.0.0", "1.1.0.0", "2.0.0.0"} {
+		fake.AddPTEFile("p_"+v+".app", bcadmintest.App{AppID: pteID, Name: "P", Version: v})
+	}
+	ctx := context.Background()
+	upload := func(version string, schedule bcadmin.DeploymentSchedule) (*bcadmin.Poller[*bcadmin.Operation], error) {
+		return apps.InstallPTE(ctx, bytes.NewReader([]byte("app")), bcadmin.InstallPTEOptions{
+			FileName: "p_" + version + ".app", AcceptISVEULA: true, DeploymentSchedule: schedule,
+		})
+	}
+	p, err := upload("1.0.0.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Wait(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	scheduled, err := upload("1.1.0.0", bcadmin.DeploymentUpdateWindow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err = upload("2.0.0.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Wait(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upload("1.0.0.0", ""); bcadmin.ErrorCode(err) != "invalidTargetVersion" {
+		t.Errorf("upload of an older version: %v", err)
+	}
+	fake.RunScheduled(bcadmin.FamilyBusinessCentral, "sb")
+	op, err := scheduled.Wait(ctx, nil)
+	if err != nil || !op.Status.Is(bcadmin.OperationStatusSkipped) {
+		t.Errorf("scheduled older version = %+v, %v", op, err)
+	}
+	if v := installed(t, fake)[pteID].Version; v != "2.0.0.0" {
+		t.Errorf("installed version = %s, want 2.0.0.0", v)
+	}
+}
+
+// TestAppsFakeScheduledRecheck checks that scheduled operations check the
+// dependencies again when they run.
+func TestAppsFakeScheduledRecheck(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	base := bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.5.0.0", CanBeUninstalled: true}
+
+	t.Run("dependency uninstalled meanwhile", func(t *testing.T) {
+		t.Parallel()
+		for _, handle := range []bool{false, true} {
+			fake, apps := newAppsFake(t)
+			fake.Install(bcadmin.FamilyBusinessCentral, "sb", base)
+			p, err := apps.Install(ctx, connectorID, bcadmin.InstallAppOptions{AcceptISVEULA: true, UseEnvironmentUpdateWindow: true, InstallOrUpdateNeededDependencies: handle})
+			if err != nil {
+				t.Fatal(err)
+			}
+			u, err := apps.Uninstall(ctx, baseID, bcadmin.UninstallAppOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := u.Wait(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			fake.RunScheduled(bcadmin.FamilyBusinessCentral, "sb")
+			_, err = p.Wait(ctx, nil)
+			got := installed(t, fake)
+			if handle {
+				if err != nil || got[connectorID].Version != "2.2.0.0" || got[baseID].Version != "1.5.0.0" {
+					t.Errorf("with dependencies: %v, installed = %+v", err, got)
+				}
+				continue
+			}
+			var oe *bcadmin.OperationError
+			if !errors.As(err, &oe) || !strings.Contains(oe.Operation.ErrorMessage, baseID) || len(got) != 0 {
+				t.Errorf("without dependencies: %v, installed = %+v", err, got)
+			}
+		}
+	})
+	t.Run("dependent installed meanwhile", func(t *testing.T) {
+		t.Parallel()
+		fake, apps := newAppsFake(t)
+		fake.Install(bcadmin.FamilyBusinessCentral, "sb", base)
+		u, err := apps.Uninstall(ctx, baseID, bcadmin.UninstallAppOptions{UseEnvironmentUpdateWindow: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := apps.Install(ctx, connectorID, bcadmin.InstallAppOptions{AcceptISVEULA: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Wait(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+		fake.RunScheduled(bcadmin.FamilyBusinessCentral, "sb")
+		var oe *bcadmin.OperationError
+		if _, err := u.Wait(ctx, nil); !errors.As(err, &oe) || !strings.Contains(oe.Operation.ErrorMessage, connectorID) {
+			t.Errorf("scheduled uninstall with a new dependent: %v", err)
+		}
+		if got := installed(t, fake); len(got) != 2 {
+			t.Errorf("installed = %+v", got)
+		}
+	})
+}
+
+// TestAppsFakeVersionMatching checks that versions match numerically and
+// that an app depending on itself installs.
+func TestAppsFakeVersionMatching(t *testing.T) {
+	t.Parallel()
+	fake, apps := newAppsFake(t)
+	fake.AddPTEFile("p.app", bcadmintest.App{AppID: pteID, Name: "P", Version: "2.0.0.0"})
+	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: pteID, Name: "P", Version: "1.0", AppType: bcadmin.AppTypeTenant})
+	ctx := context.Background()
+	if _, err := apps.InstallPTE(ctx, bytes.NewReader([]byte("app")), bcadmin.InstallPTEOptions{
+		FileName: "p.app", AcceptISVEULA: true, DeploymentSchedule: bcadmin.DeploymentNextMajorUpdate,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	op, err := apps.RemoveScheduledPTEVersion(ctx, pteID, bcadmin.RemoveScheduledPTEVersionOptions{TargetVersion: "2.0", ScheduleKind: bcadmin.DeploymentNextMajorUpdate})
+	if err != nil || !op.Status.Is(bcadmin.OperationStatusCanceled) || op.ErrorMessage == "" {
+		t.Errorf("RemoveScheduledPTEVersion(2.0) = %+v, %v", op, err)
+	}
+
+	const selfID = "00000000-0000-0000-0000-000000000221"
+	fake.Publish(bcadmintest.App{AppID: selfID, Name: "Self", Version: "1.0.0.0", Dependencies: []bcadmintest.Dependency{{AppID: selfID, MinVersion: "2.0.0.0"}}})
+	p, err := apps.Install(ctx, selfID, bcadmin.InstallAppOptions{AcceptISVEULA: true})
+	if err != nil {
+		t.Fatalf("install of an app that depends on itself: %v", err)
+	}
+	if _, err := p.Wait(ctx, nil); err != nil {
+		t.Fatal(err)
 	}
 }

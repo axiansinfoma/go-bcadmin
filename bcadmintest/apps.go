@@ -31,8 +31,14 @@ import (
 // Scheduled and wait for [Apps.RunScheduled]; they can be canceled meanwhile
 // (update/cancel, removeScheduledPteVersion). Several scheduled versions of
 // a PTE can wait at once, and uninstalling a PTE keeps them, as documented.
-// Dependencies an operation installs or updates are never downgraded when a
-// scheduled operation runs later.
+// When an operation finishes, the fake checks the current state again, as
+// other operations may have changed it while it was scheduled: an install
+// or update whose app is already installed in the same or a newer version
+// ends Skipped; one whose dependencies are no longer met installs them if
+// the request asked for that (never downgrading an app) and fails
+// otherwise; an uninstall fails if other apps now depend on the app and the
+// request did not ask to uninstall dependents, and is Skipped if the app is
+// gone. A PTE upload older than the installed version is refused.
 //
 // Operations carry both version pairs (sourceAppVersion/targetAppVersion and
 // sourceVersion/targetVersion), as the different app endpoints return one or
@@ -87,15 +93,17 @@ type Dependency struct {
 }
 
 type appOperation struct {
-	op     bcadmin.Operation
-	env    string // envKey
-	app    App    // the app version the operation installs, updates to or uninstalls
-	kind   string // install, update, uninstall
-	pte    bool
-	held   bool // scheduled until RunScheduled
-	fail   string
-	polls  int
-	extras []App // dependencies installed or updated, or dependents uninstalled, with the app
+	op    bcadmin.Operation
+	env   string // envKey
+	app   App    // the app version the operation installs, updates to or uninstalls
+	kind  string // install, update, uninstall
+	pte   bool
+	held  bool // scheduled until RunScheduled
+	fail  string
+	polls int
+	// handleDeps is installOrUpdateNeededDependencies (install, update, PTE)
+	// or uninstallDependents (uninstall) of the request.
+	handleDeps bool
 }
 
 // EnableApps registers handlers for the app management endpoints
@@ -302,6 +310,9 @@ func (a *Apps) missing(key string, app App) (reqs []bcadmin.AppRequirement, fix 
 		queue = queue[1:]
 		for _, d := range cur.Dependencies {
 			id := strings.ToLower(d.AppID)
+			if id == strings.ToLower(app.AppID) {
+				continue // the app itself, reached through a cycle
+			}
 			ids[id] = d.AppID
 			if compareVersions(d.MinVersion, need[id]) > 0 {
 				need[id] = d.MinVersion
@@ -385,7 +396,7 @@ func (a *Apps) dependents(key, appID string) []bcadmin.InstalledApp {
 // a.mu must be held.
 func (a *Apps) installedPTE(inst bcadmin.InstalledApp) (App, bool) {
 	for _, p := range a.ptes {
-		if strings.EqualFold(p.AppID, inst.AppID) && p.Version == inst.Version {
+		if strings.EqualFold(p.AppID, inst.AppID) && compareVersions(p.Version, inst.Version) == 0 {
 			return p, true
 		}
 	}
@@ -405,7 +416,7 @@ func requirementsError(w http.ResponseWriter, message string, reqs []bcadmin.App
 // start records a new operation of the given kind (install, update,
 // uninstall) and writes it. It is Running when scheduleKind is Immediate,
 // otherwise Scheduled and held until RunScheduled. a.mu must be held.
-func (a *Apps) start(w http.ResponseWriter, r *http.Request, kind string, app App, source string, scheduleKind string, pte bool, extras []App, params map[string]any) {
+func (a *Apps) start(w http.ResponseWriter, r *http.Request, kind string, app App, source string, scheduleKind string, pte bool, handleDeps bool, params map[string]any) {
 	a.nextID++
 	now := time.Now().UTC()
 	op := bcadmin.Operation{
@@ -432,7 +443,7 @@ func (a *Apps) start(w http.ResponseWriter, r *http.Request, kind string, app Ap
 	}
 	o := &appOperation{
 		op: op, env: envKey(r.PathValue("family"), r.PathValue("env")), app: app, kind: kind,
-		pte: pte, held: scheduleKind != "Immediate", extras: extras,
+		pte: pte, held: scheduleKind != "Immediate", handleDeps: handleDeps,
 	}
 	if a.failMsg != "" {
 		o.fail, a.failMsg = a.failMsg, ""
@@ -465,35 +476,71 @@ func (a *Apps) advance(o *appOperation) {
 		return
 	}
 	o.op.CompletedOn = now
-	apps := a.envApps(o.env)
-	key := strings.ToLower(o.app.AppID)
 	if o.fail != "" {
-		o.op.Status = bcadmin.OperationStatusFailed
-		o.op.ErrorMessage = o.fail
-		if inst := apps[key]; inst != nil {
-			inst.State = bcadmin.AppStateInstalled
-			setResult(inst, o, "Failed")
-		}
+		a.failOperation(o, o.fail)
 		return
 	}
-	o.op.Status = bcadmin.OperationStatusSucceeded
-	switch o.kind {
-	case "uninstall":
-		for _, d := range o.extras {
+	// Check the current state again: other operations may have changed it
+	// while this one was scheduled.
+	apps := a.envApps(o.env)
+	key := strings.ToLower(o.app.AppID)
+	if o.kind == "uninstall" {
+		if apps[key] == nil {
+			o.op.Status = bcadmin.OperationStatusSkipped
+			return
+		}
+		deps := a.dependents(o.env, o.app.AppID)
+		if len(deps) > 0 && !o.handleDeps {
+			a.failOperation(o, "The app cannot be uninstalled because other apps depend on it: "+appNames(deps))
+			return
+		}
+		o.op.Status = bcadmin.OperationStatusSucceeded
+		for _, d := range deps {
 			delete(apps, strings.ToLower(d.AppID))
 		}
 		delete(apps, key)
-	default:
-		for _, d := range o.extras {
-			// A dependency may have been updated while the operation was
-			// scheduled; never downgrade it.
-			if inst := apps[strings.ToLower(d.AppID)]; inst != nil && compareVersions(inst.Version, d.Version) >= 0 {
-				continue
-			}
-			a.put(apps, d, false, o)
-		}
-		a.put(apps, o.app, o.pte, o)
+		return
 	}
+	if inst := apps[key]; inst != nil && compareVersions(inst.Version, o.app.Version) >= 0 {
+		// The same or a newer version is installed already.
+		o.op.Status = bcadmin.OperationStatusSkipped
+		inst.State = bcadmin.AppStateInstalled
+		return
+	}
+	reqs, fix, ok := a.missing(o.env, o.app)
+	if len(reqs) > 0 && (!o.handleDeps || !ok) {
+		names := make([]bcadmin.InstalledApp, 0, len(reqs))
+		for _, r := range reqs {
+			names = append(names, bcadmin.InstalledApp{AppID: r.AppID, Name: r.Name, Version: r.Version})
+		}
+		a.failOperation(o, "Dependencies of the app are not met: "+appNames(names))
+		return
+	}
+	o.op.Status = bcadmin.OperationStatusSucceeded
+	for _, d := range fix {
+		a.put(apps, d, false, o)
+	}
+	a.put(apps, o.app, o.pte, o)
+}
+
+// failOperation ends o with status Failed and message, without changing the
+// installed apps. a.mu must be held.
+func (a *Apps) failOperation(o *appOperation, message string) {
+	o.op.Status = bcadmin.OperationStatusFailed
+	o.op.ErrorMessage = message
+	if inst := a.installed[o.env][strings.ToLower(o.app.AppID)]; inst != nil {
+		inst.State = bcadmin.AppStateInstalled
+		setResult(inst, o, "Failed")
+	}
+}
+
+// appNames lists apps as "name version (id)".
+func appNames(apps []bcadmin.InstalledApp) string {
+	parts := make([]string, 0, len(apps))
+	for _, a := range apps {
+		parts = append(parts, strings.TrimSpace(a.Name+" "+a.Version)+" ("+a.AppID+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // put installs app in apps or updates it. a.mu must be held.
@@ -573,12 +620,12 @@ func (a *Apps) handleInstall(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "eulaNotAccepted", "acceptIsvEula must be true to install an app")
 		return
 	}
-	if _, ok := a.catalog[strings.ToLower(appID)]; !ok {
-		WriteError(w, http.StatusNotFound, "appNotFound", "app "+appID+" was not found")
-		return
-	}
 	if a.installed[key][strings.ToLower(appID)] != nil {
 		WriteError(w, http.StatusConflict, "appAlreadyInstalled", "app "+appID+" is already installed")
+		return
+	}
+	if _, ok := a.catalog[strings.ToLower(appID)]; !ok {
+		WriteError(w, http.StatusNotFound, "appNotFound", "app "+appID+" was not found")
 		return
 	}
 	if a.busy(key, appID, false) {
@@ -590,12 +637,12 @@ func (a *Apps) handleInstall(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "versionNotFound", "version "+body.TargetVersion+" of app "+appID+" was not found")
 		return
 	}
-	reqs, fix, resolvable := a.missing(key, app)
+	reqs, _, resolvable := a.missing(key, app)
 	if len(reqs) > 0 && (!body.InstallOrUpdateNeededDependencies || !resolvable) {
 		requirementsError(w, "The app cannot be installed because of missing dependencies.", reqs)
 		return
 	}
-	a.start(w, r, "install", app, "", schedule(body.UseEnvironmentUpdateWindow), false, fix, nil)
+	a.start(w, r, "install", app, "", schedule(body.UseEnvironmentUpdateWindow), false, body.InstallOrUpdateNeededDependencies, nil)
 }
 
 func (a *Apps) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -629,12 +676,12 @@ func (a *Apps) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalidTargetVersion", "version "+app.Version+" is not newer than the installed version "+inst.Version)
 		return
 	}
-	reqs, fix, resolvable := a.missing(key, app)
+	reqs, _, resolvable := a.missing(key, app)
 	if len(reqs) > 0 && (!body.InstallOrUpdateNeededDependencies || !resolvable) {
 		requirementsError(w, "The app cannot be updated because of missing dependencies.", reqs)
 		return
 	}
-	a.start(w, r, "update", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), false, fix, nil)
+	a.start(w, r, "update", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), false, body.InstallOrUpdateNeededDependencies, nil)
 }
 
 func (a *Apps) handleCancelUpdate(w http.ResponseWriter, r *http.Request) {
@@ -662,9 +709,11 @@ func (a *Apps) cancel(w http.ResponseWriter, o *appOperation) {
 	}
 	o.op.Status = bcadmin.OperationStatusCanceled
 	o.op.CanceledBy = "bcadmintest"
+	o.op.ErrorMessage = "The scheduled operation was canceled."
 	o.op.CompletedOn = &bcadmin.Time{Time: time.Now().UTC()}
 	if inst := a.installed[o.env][strings.ToLower(o.app.AppID)]; inst != nil {
 		inst.State = bcadmin.AppStateInstalled
+		setResult(inst, o, "Canceled")
 	}
 	WriteJSON(w, http.StatusOK, o.op)
 }
@@ -700,12 +749,8 @@ func (a *Apps) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		requirementsError(w, "The app cannot be uninstalled because other apps depend on it.", reqs)
 		return
 	}
-	extras := make([]App, 0, len(deps))
-	for _, d := range deps {
-		extras = append(extras, App{AppID: d.AppID, Name: d.Name, Publisher: d.Publisher, Version: d.Version})
-	}
 	app := App{AppID: inst.AppID, Name: inst.Name, Publisher: inst.Publisher, Version: inst.Version}
-	a.start(w, r, "uninstall", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), inst.AppType.Is(bcadmin.AppTypeTenant), extras, nil)
+	a.start(w, r, "uninstall", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), inst.AppType.Is(bcadmin.AppTypeTenant), body.UninstallDependents, nil)
 }
 
 func (a *Apps) handleUninstallRequirements(w http.ResponseWriter, r *http.Request) {
@@ -824,12 +869,16 @@ func (a *Apps) handlePTEInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if inst := a.installed[key][strings.ToLower(app.AppID)]; inst != nil && compareVersions(app.Version, inst.Version) < 0 {
+		WriteError(w, http.StatusBadRequest, "invalidTargetVersion", "version "+app.Version+" is older than the installed version "+inst.Version)
+		return
+	}
 	if inst := a.installed[key][strings.ToLower(app.AppID)]; inst == nil && scheduleKind != "Immediate" && scheduleKind != "UpdateWindow" {
 		WriteError(w, http.StatusBadRequest, "invalidInput", "a new per-tenant extension can only use Immediate or UpdateWindow")
 		return
 	}
 	needDeps, _ := strconv.ParseBool(fields["installOrUpdateNeededDependencies"])
-	reqs, fix, resolvable := a.missing(key, app)
+	reqs, _, resolvable := a.missing(key, app)
 	if len(reqs) > 0 && (!needDeps || !resolvable) {
 		requirementsError(w, "The app cannot be installed because of missing dependencies.", reqs)
 		return
@@ -842,7 +891,7 @@ func (a *Apps) handlePTEInstall(w http.ResponseWriter, r *http.Request) {
 		opParams["languageId"] = lang
 	}
 	// The docs say sourceAppVersion is empty for PTE installs.
-	a.start(w, r, "install", app, "", scheduleKind, true, fix, opParams)
+	a.start(w, r, "install", app, "", scheduleKind, true, needDeps, opParams)
 }
 
 func (a *Apps) handleScheduledPTE(w http.ResponseWriter, r *http.Request) {
@@ -868,7 +917,7 @@ func (a *Apps) handleRemoveScheduledPTE(w http.ResponseWriter, r *http.Request) 
 	key := envKey(r.PathValue("family"), r.PathValue("env"))
 	for _, o := range a.ops {
 		if o.env == key && o.pte && o.kind == "install" && strings.EqualFold(o.app.AppID, r.PathValue("app")) &&
-			o.app.Version == body.TargetVersion && strings.EqualFold(o.op.ScheduleKind, string(body.ScheduleKind)) &&
+			compareVersions(o.app.Version, body.TargetVersion) == 0 && strings.EqualFold(o.op.ScheduleKind, string(body.ScheduleKind)) &&
 			o.held && o.op.Status.Is(bcadmin.OperationStatusScheduled) {
 			a.cancel(w, o)
 			return
