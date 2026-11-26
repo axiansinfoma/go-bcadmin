@@ -1,0 +1,15 @@
+{
+  "value": [
+    {
+      "applicationType": "BusinessCentral",
+      "applicationVersion": "27.1.12345.0",
+      "blob": "sb-20261120.bacpac",
+      "container": "exports",
+      "country": "DE",
+      "environmentName": "sb",
+      "storageAccount": "contosoexports",
+      "time": "2026-11-20T10:00:00Z",
+      "user": "admin@contoso.com"
+    }
+  ]
+}

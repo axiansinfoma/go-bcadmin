@@ -1,0 +1,15 @@
+{
+  "value": [
+    {
+      "TenantId": "00000000-0000-0000-0000-000000000001",
+      "EnvironmentId": "00000000-0000-0000-0000-000000000801",
+      "CreatedDate": "2026-11-20T10:00:00Z",
+      "State": "Active",
+      "MsaasTicketId": "2611200010000001",
+      "IcmTicketId": "100000001",
+      "AppVersion": "27.1.12345.0",
+      "PlatformVersion": "27.0.12340.0",
+      "OutageType": "EnvironmentInaccessible"
+    }
+  ]
+}

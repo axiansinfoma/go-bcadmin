@@ -1,0 +1,112 @@
+package bcadmin_test
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/axiansinfoma/go-bcadmin"
+	"github.com/axiansinfoma/go-bcadmin/bcadmintest"
+)
+
+const sasURI = "https://contosoexports.blob.core.windows.net/?sv=2024-01-01&sig=SECRET"
+
+func TestExports(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodGet, "exports/applications/{family}/environments/{env}/metrics", http.StatusOK,
+		map[string]any{"exportsPerMonth": 10, "exportsRemainingThisMonth": 7})
+	srv.Handle(http.MethodPost, "exports/applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	serveFixture(t, srv, http.MethodPost, "exports/history", "testdata/exports/history.json")
+	ex := srv.NewClient(t).Exports()
+	ctx := context.Background()
+
+	m, err := ex.Metrics(ctx, bc, "sb")
+	if err != nil || m.ExportsPerMonth != 10 || m.ExportsRemainingThisMonth != 7 {
+		t.Errorf("Metrics() = %+v, %v", m, err)
+	}
+	op, err := ex.Start(ctx, bc, "sb", bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: "exports", Blob: "sb.bacpac"})
+	if err != nil || op != nil {
+		t.Errorf("Start() = %+v, %v; want nil, nil for an empty response", op, err)
+	}
+	want := map[string]any{"storageAccountSasUri": sasURI, "container": "exports", "blob": "sb.bacpac"}
+	if got := lastBody(t, srv); !reflect.DeepEqual(got, want) {
+		t.Errorf("start body = %v, want %v", got, want)
+	}
+	findRequest(t, srv, http.MethodPost, "/admin/v2.29/exports/applications/BusinessCentral/environments/sb")
+
+	n := len(srv.Requests())
+	for name, opts := range map[string]bcadmin.ExportOptions{
+		"no blob":   {StorageAccountSASURI: sasURI, Container: "c"},
+		"http":      {StorageAccountSASURI: "http://x.example.com/?sig=SECRET", Container: "c", Blob: "b"},
+		"no token":  {StorageAccountSASURI: "https://x.example.com/", Container: "c", Blob: "b"},
+		"not a url": {StorageAccountSASURI: "::SECRET", Container: "c", Blob: "b"},
+	} {
+		_, err := ex.Start(ctx, bc, "sb", opts)
+		if err == nil {
+			t.Errorf("%s: no error", name)
+		} else if strings.Contains(err.Error(), "SECRET") {
+			t.Errorf("%s: error contains the SAS token: %v", name, err)
+		}
+	}
+	if got := len(srv.Requests()); got != n {
+		t.Errorf("invalid options sent %d requests", got-n)
+	}
+
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	history, err := ex.History(ctx, start, start.AddDate(0, 1, 0))
+	if err != nil || len(history) != 1 || history[0].EnvironmentName != "sb" || history[0].Time == nil || history[0].User != "admin@contoso.com" {
+		t.Fatalf("History() = %+v, %v", history, err)
+	}
+	req, _ := srv.LastRequest()
+	q, _ := url.ParseQuery(req.Query)
+	if req.Method != http.MethodPost || q.Get("start") != "2026-11-01T00:00:00Z" || q.Get("end") != "2026-12-01T00:00:00Z" {
+		t.Errorf("history request = %s ?%s", req.Method, req.Query)
+	}
+	if _, err := ex.History(ctx, start, start.Add(-time.Hour)); err == nil {
+		t.Error("end before start: no error")
+	}
+	newer := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.30"))
+	if _, err := newer.NewClient(t).Exports().History(ctx, start, start.Add(time.Hour)); err == nil || !strings.Contains(err.Error(), "v2.30") {
+		t.Errorf("History on v2.30: %v", err)
+	}
+}
+
+func TestExportStartReturnsOperationAndIsNotRetried(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "exports/applications/{family}/environments/{env}", http.StatusAccepted,
+		map[string]any{"id": "00000000-0000-0000-0000-000000000901", "type": "DatabaseExport", "status": "Queued"})
+	op, err := srv.NewClient(t).Exports().Start(context.Background(), bc, "sb", bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: "c", Blob: "b"})
+	if err != nil || op == nil || op.ID != "00000000-0000-0000-0000-000000000901" {
+		t.Errorf("Start() = %+v, %v", op, err)
+	}
+
+	failing := bcadmintest.NewServer(t)
+	failing.Handle(http.MethodPost, "exports/applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+		bcadmintest.WriteError(w, http.StatusInternalServerError, "exportFailed", "The export failed.")
+	})
+	_, err = failing.NewClient(t).Exports().Start(context.Background(), bc, "sb", bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: "c", Blob: "b"})
+	if bcadmin.ErrorCode(err) != "exportFailed" || strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("error = %v", err)
+	}
+	if n := len(failing.Requests()); n != 1 {
+		t.Errorf("export sent %d times, want 1", n)
+	}
+}
+
+func TestHistoryAcceptsBareArray(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "exports/history", http.StatusOK, []map[string]any{{"environmentName": "a"}, {"environmentName": "b"}})
+	h, err := srv.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now())
+	if err != nil || len(h) != 2 || h[1].EnvironmentName != "b" {
+		t.Errorf("History() = %+v, %v", h, err)
+	}
+}

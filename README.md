@@ -197,6 +197,38 @@ for _, row := range tel.Rows {
 }
 ```
 
+## Exports, notifications and support
+
+```go
+// Export the database to Azure storage (needs D365 BACKUP/RESTORE in the
+// environment; uses one of the monthly exports).
+m, err := env.ExportMetrics(ctx)
+if err != nil {
+	return err
+}
+if m.ExportsRemainingThisMonth > 0 {
+	if _, err := env.ExportDatabase(ctx, bcadmin.ExportOptions{
+		StorageAccountSASURI: sasURI, Container: "exports", Blob: "uat.bacpac",
+	}); err != nil {
+		return err
+	}
+}
+
+// Who gets update notifications.
+if _, err := client.Notifications().AddRecipient(ctx, "ops@contoso.com", "Contoso Ops"); err != nil {
+	return err
+}
+
+// Report that an environment is not accessible.
+res, err := env.ReportOutage(ctx, bcadmin.OutageReport{OutageType: outageType, Answers: answers})
+if err != nil {
+	return err
+}
+if res.CreationStatus.Is(bcadmin.OutageReportError) {
+	return errors.New("outage report failed")
+}
+```
+
 ## Long-running operations
 
 Calls that start an operation return a `*bcadmin.Poller[T]`:
@@ -363,9 +395,15 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Settings | `PUT .../settings/appSourceAppsUpdateCadence` | `Settings(...).SetAppSourceUpdateCadence` | | ✅ |
 | Sessions | `GET .../environments/{name}/sessions[/{id}]` | `Sessions(...).List`, `Get` | | ✅ |
 | Sessions | `DELETE .../environments/{name}/sessions/{id}` | `Sessions(...).Terminate` | | ✅ |
-| Database export | metrics, start, history | | | 🚧 |
-| Notifications | settings, recipients | | | 🚧 |
-| Support | contact, outage types and questions, reported outages, report outage | | | 🚧 |
+| Database export | `GET exports/.../environments/{name}/metrics` | `Exports().Metrics`, `Environment.ExportMetrics` | | ✅ |
+| Database export | `POST exports/.../environments/{name}` | `Exports().Start`, `Environment.ExportDatabase` | | ✅ |
+| Database export | `POST exports/history` | `Exports().History` (deprecated from v2.30) | | ✅ |
+| Notifications | `GET settings/notification` | `Notifications().Settings` | | ✅ |
+| Notifications | `GET/PUT settings/notification/recipients`, `DELETE .../recipients/{id}` | `Notifications().Recipients`, `AddRecipient`, `RemoveRecipient` | | ✅ |
+| Support | `GET/PUT support/.../environments/{name}/supportcontact` | `Support().Contact`, `SetContact`, `Environment.SupportContact`, `SetSupportContact` | | ✅ |
+| Support | `GET support/outageTypes[/{type}/outageQuestions]` | `Support().OutageTypes`, `OutageQuestions` | | ✅ |
+| Support | `GET support/reportedoutages` | `Support().ReportedOutages` | | ✅ |
+| Support | `POST support/.../environments/{name}/reportoutage` | `Support().ReportOutage`, `Environment.ReportOutage` | | ✅ |
 | Telemetry | `GET .../environments/{name}/telemetry` | `Environments().Telemetry`, `Environment.Telemetry` | | ✅ |
 | Environment transfers | outgoing, incoming | | | 🚧 |
 | Authorized Entra apps | list, authorize, remove, manageable tenants | | | 🚧 |
