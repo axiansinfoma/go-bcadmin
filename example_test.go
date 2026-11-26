@@ -132,7 +132,8 @@ func ExampleAppsService_Install() {
 	defer cancel()
 	op, err := poller.Wait(waitCtx, nil)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err) // an *OperationError carries the API's message
+		return
 	}
 	fmt.Println(op.Status)
 }
