@@ -46,8 +46,16 @@ type Request struct {
 	Path   string
 	Query  string
 	Header http.Header
-	Body   []byte
+	// Body is the request body, cut off after the server's recording limit
+	// (see [WithMaxRecordedBody]); handlers always receive the whole body.
+	Body []byte
+	// BodyTruncated tells whether Body was cut off.
+	BodyTruncated bool
 }
+
+// DefaultMaxRecordedBody is the number of body bytes a [Server] records per
+// request unless [WithMaxRecordedBody] sets another limit.
+const DefaultMaxRecordedBody = 1 << 20
 
 // Fault makes a [Server] answer matching requests with a fixed response
 // instead of calling the registered handler.
@@ -76,6 +84,7 @@ type Server struct {
 	srv        *httptest.Server
 	apiVersion string
 	prefix     string
+	maxBody    int
 
 	mu       sync.Mutex
 	mux      *http.ServeMux
@@ -92,10 +101,18 @@ func WithAPIVersion(v string) Option {
 	return func(s *Server) { s.apiVersion = v }
 }
 
+// WithMaxRecordedBody sets how many bytes of each request body the server
+// keeps in [Server.Requests] (default [DefaultMaxRecordedBody]), so tests
+// that upload large files do not keep them in memory. Zero records no body;
+// a negative limit records whole bodies.
+func WithMaxRecordedBody(n int) Option {
+	return func(s *Server) { s.maxBody = n }
+}
+
 // NewServer starts a Server and stops it when the test ends.
 func NewServer(t testing.TB, opts ...Option) *Server {
 	t.Helper()
-	s := &Server{apiVersion: bcadmin.DefaultAPIVersion, mux: http.NewServeMux()}
+	s := &Server{apiVersion: bcadmin.DefaultAPIVersion, mux: http.NewServeMux(), maxBody: DefaultMaxRecordedBody}
 	for _, o := range opts {
 		o(s)
 	}
@@ -203,14 +220,20 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
+	recorded, truncated := body, false
+	if s.maxBody >= 0 && len(body) > s.maxBody {
+		// Copy, so the recorded prefix does not keep the whole body alive.
+		recorded, truncated = bytes.Clone(body[:s.maxBody]), true
+	}
 
 	s.mu.Lock()
 	s.requests = append(s.requests, Request{
-		Method: r.Method,
-		Path:   r.URL.EscapedPath(),
-		Query:  r.URL.RawQuery,
-		Header: r.Header.Clone(),
-		Body:   body,
+		Method:        r.Method,
+		Path:          r.URL.EscapedPath(),
+		Query:         r.URL.RawQuery,
+		Header:        r.Header.Clone(),
+		Body:          recorded,
+		BodyTruncated: truncated,
 	})
 	if r.Header.Get("Authorization") != "Bearer "+Token {
 		s.mu.Unlock()

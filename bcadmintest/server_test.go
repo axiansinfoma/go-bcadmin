@@ -1,8 +1,11 @@
 package bcadmintest_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/axiansinfoma/go-bcadmin"
@@ -87,5 +90,52 @@ func TestFaultNotUsedByUnauthenticatedRequest(t *testing.T) {
 	// The fault is still there for the authenticated client.
 	if _, err := srv.NewClient(t).Tenant().Quotas(context.Background()); !bcadmin.IsConflict(err) {
 		t.Errorf("error = %v, want the injected 409", err)
+	}
+}
+
+func TestServerRecordedBodyLimit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		opts      []bcadmintest.Option
+		size      int
+		recorded  int
+		truncated bool
+	}{
+		{"default, small", nil, 100, 100, false},
+		{"default, large", nil, bcadmintest.DefaultMaxRecordedBody + 10, bcadmintest.DefaultMaxRecordedBody, true},
+		{"limit", []bcadmintest.Option{bcadmintest.WithMaxRecordedBody(8)}, 20, 8, true},
+		{"none", []bcadmintest.Option{bcadmintest.WithMaxRecordedBody(0)}, 20, 0, true},
+		{"unlimited", []bcadmintest.Option{bcadmintest.WithMaxRecordedBody(-1)}, bcadmintest.DefaultMaxRecordedBody + 10, bcadmintest.DefaultMaxRecordedBody + 10, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := bcadmintest.NewServer(t, tc.opts...)
+			var handled atomic.Int64
+			srv.Handle(http.MethodPost, "upload", func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				handled.Store(int64(len(b)))
+				w.WriteHeader(http.StatusOK)
+			})
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL()+"/admin/v2.29/upload",
+				bytes.NewReader(bytes.Repeat([]byte("x"), tc.size)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+bcadmintest.Token)
+			resp, err := srv.ClientOptions().Transport.(*http.Client).Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			got, _ := srv.LastRequest()
+			if int(handled.Load()) != tc.size || len(got.Body) != tc.recorded || got.BodyTruncated != tc.truncated {
+				t.Errorf("handler got %d bytes, recorded %d (truncated %v); want %d, %d (%v)",
+					handled.Load(), len(got.Body), got.BodyTruncated, tc.size, tc.recorded, tc.truncated)
+			}
+			if tc.recorded > 0 && cap(got.Body) > tc.recorded && tc.truncated {
+				t.Errorf("recorded body keeps capacity %d", cap(got.Body))
+			}
+		})
 	}
 }

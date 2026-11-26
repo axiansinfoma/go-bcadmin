@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -104,4 +105,149 @@ func ExampleEnvironmentsService_Create() {
 		return
 	}
 	fmt.Println(env.Name, env.Status, env.WebClientLoginURL)
+}
+
+func ExampleClient_ForTenant() {
+	var client *bcadmin.Client // from bcadmin.NewClient with a multi-tenant app
+	if client == nil {
+		return
+	}
+	// The same app registration manages the environments of another tenant.
+	customer, err := client.ForTenant("00000000-0000-0000-0000-000000000002")
+	if err != nil {
+		log.Fatal(err)
+	}
+	envs, err := customer.Environments().List(context.Background(), bcadmin.FamilyBusinessCentral)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, env := range envs {
+		fmt.Println(env.Name, env.Type, env.ApplicationVersion)
+	}
+}
+
+func ExampleAppsService_Install() {
+	var env *bcadmin.Environment // from client.Environments().Get
+	if env == nil {
+		return
+	}
+	ctx := context.Background()
+	poller, err := env.Apps().Install(ctx, "00000000-0000-0000-0000-000000000020", bcadmin.InstallAppOptions{
+		AcceptISVEULA: true, // accepts the app provider's license terms
+	})
+	if re, ok := errors.AsType[*bcadmin.ResponseError](err); ok && re.Data != nil {
+		// Missing dependencies; install them first or set
+		// InstallOrUpdateNeededDependencies.
+		for _, r := range re.Data.Requirements {
+			fmt.Println("requires", r.Name, r.Version)
+		}
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	op, err := poller.Wait(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(op.Status)
+}
+
+func ExampleAppsService_InstallPTE() {
+	var env *bcadmin.Environment // from client.Environments().Get
+	if env == nil {
+		return
+	}
+	f, err := os.Open("Contoso_MyApp_1.0.0.0.app")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	if err := installPTE(context.Background(), env, f); err != nil {
+		fmt.Println(err)
+	}
+}
+
+// installPTE installs the per-tenant extension in f in env.
+func installPTE(ctx context.Context, env *bcadmin.Environment, f *os.File) error {
+	// The file is streamed, not loaded into memory.
+	poller, err := env.Apps().InstallPTE(ctx, f, bcadmin.InstallPTEOptions{
+		FileName:           "Contoso_MyApp_1.0.0.0.app",
+		DeploymentSchedule: bcadmin.DeploymentUpdateWindow,
+		AcceptISVEULA:      true,
+	})
+	if err != nil {
+		return err
+	}
+	// Return as soon as the installation is scheduled for the update window.
+	op, err := poller.Wait(ctx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
+	if err != nil {
+		return err
+	}
+	fmt.Println(op.Status)
+	return nil
+}
+
+func ExampleUpdatesService_Select() {
+	var env *bcadmin.Environment // from client.Environments().Get
+	if env == nil {
+		return
+	}
+	ctx := context.Background()
+	updates, err := env.Updates().List(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, u := range updates {
+		if !u.Available {
+			continue
+		}
+		// Update tonight, inside the environment's update window.
+		start := time.Now().Add(12 * time.Hour)
+		if err := env.Updates().Select(ctx, u.TargetVersion, &bcadmin.ScheduleUpdateOptions{SelectedDateTime: start}); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("selected", u.TargetVersion)
+		return
+	}
+}
+
+func ExampleSettingsService_SetUpdateWindow() {
+	var env *bcadmin.Environment // from client.Environments().Get
+	if env == nil {
+		return
+	}
+	w, err := env.Settings().SetUpdateWindow(context.Background(), bcadmin.SetUpdateWindowOptions{
+		Start: "22:00", End: "06:00", TimeZoneID: "W. Europe Standard Time",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%+v\n", w)
+}
+
+func ExampleExportsService_Start() {
+	var env *bcadmin.Environment // from client.Environments().Get
+	if env == nil {
+		return
+	}
+	ctx := context.Background()
+	m, err := env.ExportMetrics(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if m.ExportsRemainingThisMonth == 0 {
+		fmt.Println("no exports left this month")
+		return
+	}
+	// The SAS URI is a secret; ExportOptions masks it when printed.
+	opts := bcadmin.ExportOptions{
+		StorageAccountSASURI: os.Getenv("EXPORT_SAS_URI"),
+		Container:            "exports",
+		Blob:                 env.Name + ".bacpac",
+	}
+	if _, err := env.ExportDatabase(ctx, opts); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("export started:", opts)
 }
