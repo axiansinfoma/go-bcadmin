@@ -37,9 +37,6 @@ func ExampleNewClient() {
 
 func ExampleTenantService_Quotas() {
 	var client *bcadmin.Client // from bcadmin.NewClient
-	if client == nil {
-		return
-	}
 	quotas, err := client.Tenant().Quotas(context.Background())
 	if err != nil {
 		log.Fatal(err)
@@ -49,9 +46,6 @@ func ExampleTenantService_Quotas() {
 
 func ExampleTenantService_ResumeOperation() {
 	var client *bcadmin.Client // from bcadmin.NewClient
-	if client == nil {
-		return
-	}
 	// Pick up an operation started earlier, for example by another process.
 	poller, err := client.Tenant().ResumeOperation("00000000-0000-0000-0000-000000000010")
 	if err != nil {
@@ -73,9 +67,6 @@ func ExampleTenantService_ResumeOperation() {
 
 func ExampleResponseError() {
 	var client *bcadmin.Client // from bcadmin.NewClient
-	if client == nil {
-		return
-	}
 	_, err := client.Tenant().Quotas(context.Background())
 	if re, ok := errors.AsType[*bcadmin.ResponseError](err); ok {
 		// The API's own error code and message, plus the request ID for support.
@@ -85,9 +76,6 @@ func ExampleResponseError() {
 
 func ExampleEnvironmentsService_Create() {
 	var client *bcadmin.Client // from bcadmin.NewClient
-	if client == nil {
-		return
-	}
 	ctx := context.Background()
 	poller, err := client.Environments().Create(ctx, bcadmin.FamilyBusinessCentral, "uat", bcadmin.CreateEnvironmentOptions{
 		Type:        bcadmin.EnvironmentTypeSandbox,
@@ -109,9 +97,6 @@ func ExampleEnvironmentsService_Create() {
 
 func ExampleClient_ForTenant() {
 	var client *bcadmin.Client // from bcadmin.NewClient with a multi-tenant app
-	if client == nil {
-		return
-	}
 	// The same app registration manages the environments of another tenant.
 	customer, err := client.ForTenant("00000000-0000-0000-0000-000000000002")
 	if err != nil {
@@ -128,9 +113,6 @@ func ExampleClient_ForTenant() {
 
 func ExampleAppsService_Install() {
 	var env *bcadmin.Environment // from client.Environments().Get
-	if env == nil {
-		return
-	}
 	ctx := context.Background()
 	poller, err := env.Apps().Install(ctx, "00000000-0000-0000-0000-000000000020", bcadmin.InstallAppOptions{
 		AcceptISVEULA: true, // accepts the app provider's license terms
@@ -155,9 +137,6 @@ func ExampleAppsService_Install() {
 
 func ExampleAppsService_InstallPTE() {
 	var env *bcadmin.Environment // from client.Environments().Get
-	if env == nil {
-		return
-	}
 	f, err := os.Open("Contoso_MyApp_1.0.0.0.app")
 	if err != nil {
 		log.Fatal(err)
@@ -181,18 +160,19 @@ func installPTE(ctx context.Context, env *bcadmin.Environment, f *os.File) error
 	}
 	// Return as soon as the installation is scheduled for the update window.
 	op, err := poller.Wait(ctx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
+	if errors.Is(err, bcadmin.ErrOperationScheduled) {
+		fmt.Println("scheduled for the update window")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Println(op.Status)
+	fmt.Println(op.Status) // already done, for example when the window was open
 	return nil
 }
 
 func ExampleUpdatesService_Select() {
 	var env *bcadmin.Environment // from client.Environments().Get
-	if env == nil {
-		return
-	}
 	ctx := context.Background()
 	updates, err := env.Updates().List(ctx)
 	if err != nil {
@@ -202,7 +182,8 @@ func ExampleUpdatesService_Select() {
 		if !u.Available {
 			continue
 		}
-		// Update tonight, inside the environment's update window.
+		// Start in 12 hours at the earliest; outside the environment's update
+		// window the update starts in the next window.
 		start := time.Now().Add(12 * time.Hour)
 		if err := env.Updates().Select(ctx, u.TargetVersion, &bcadmin.ScheduleUpdateOptions{SelectedDateTime: start}); err != nil {
 			log.Fatal(err)
@@ -214,9 +195,6 @@ func ExampleUpdatesService_Select() {
 
 func ExampleSettingsService_SetUpdateWindow() {
 	var env *bcadmin.Environment // from client.Environments().Get
-	if env == nil {
-		return
-	}
 	w, err := env.Settings().SetUpdateWindow(context.Background(), bcadmin.SetUpdateWindowOptions{
 		Start: "22:00", End: "06:00", TimeZoneID: "W. Europe Standard Time",
 	})
@@ -227,12 +205,10 @@ func ExampleSettingsService_SetUpdateWindow() {
 }
 
 func ExampleExportsService_Start() {
-	var env *bcadmin.Environment // from client.Environments().Get
-	if env == nil {
-		return
-	}
+	var client *bcadmin.Client // from bcadmin.NewClient
 	ctx := context.Background()
-	m, err := env.ExportMetrics(ctx)
+	exports := client.Exports()
+	m, err := exports.Metrics(ctx, bcadmin.FamilyBusinessCentral, "uat")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -244,10 +220,12 @@ func ExampleExportsService_Start() {
 	opts := bcadmin.ExportOptions{
 		StorageAccountSASURI: os.Getenv("EXPORT_SAS_URI"),
 		Container:            "exports",
-		Blob:                 env.Name + ".bacpac",
+		Blob:                 "uat.bacpac",
 	}
-	if _, err := env.ExportDatabase(ctx, opts); err != nil {
+	// The response is not documented; op is nil unless it is an operation.
+	op, err := exports.Start(ctx, bcadmin.FamilyBusinessCentral, "uat", opts)
+	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("export started:", opts)
+	fmt.Println("export started:", opts, op != nil)
 }

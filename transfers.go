@@ -74,9 +74,9 @@ func (s *TransfersService) RequestOutgoing(ctx context.Context, family, environm
 // family/environment and returns the canceled operation, or nil if a
 // successful response has no readable operation. The call must be
 // authenticated on the source tenant. A DELETE is retried on server errors
-// and when the response cannot be read, so a retry after a cancel that took effect can fail although the transfer
-// was canceled; check [TransfersService.Outgoing] after an error. Available
-// since API v2.20.
+// and when the response cannot be read, so a retry after a cancel that took
+// effect can fail although the transfer was canceled; check
+// [TransfersService.Outgoing] after an error. Available since API v2.20.
 //
 // DELETE /transfers/outgoing/applications/{applicationFamily}/environments/{environmentName}.
 func (s *TransfersService) CancelOutgoing(ctx context.Context, family, environment string) (*Operation, error) {

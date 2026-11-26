@@ -382,7 +382,9 @@ them in memory; `bcadmintest.WithMaxRecordedBody` changes the limit.
 
 The `integration` directory holds read-only tests against the live API. They
 are excluded by a build tag and never run in CI. They read quotas, environments,
-apps, updates, settings and similar data, and log only counts.
+apps, updates, settings and similar data, and log only counts. Error messages of
+failed calls can contain the environment name, tenant details and the API's
+message; redact them before sharing the output.
 
 ```sh
 export BCADMIN_TENANT_ID=<tenant-id>     # required, otherwise the tests are skipped

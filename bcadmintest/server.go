@@ -47,7 +47,8 @@ type Request struct {
 	Query  string
 	Header http.Header
 	// Body is the request body, cut off after the server's recording limit
-	// (see [WithMaxRecordedBody]); handlers always receive the whole body.
+	// (see [WithMaxRecordedBody]; earlier versions of this package recorded
+	// whole bodies); handlers always receive the whole body.
 	Body []byte
 	// BodyTruncated tells whether Body was cut off.
 	BodyTruncated bool
