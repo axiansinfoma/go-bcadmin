@@ -71,7 +71,8 @@ type ExportOptions struct {
 // Track the export with the environment's operations
 // ([EnvironmentsService.Operations]).
 //
-// The request is not retried on server errors, so a failure never starts a
+// The request is not retried on server errors (unless
+// ClientOptions.RetryNonIdempotent is set), so a failure never starts a
 // second export.
 //
 // POST /exports/applications/{applicationFamily}/environments/{environmentName}.
@@ -139,8 +140,13 @@ func (s *ExportsService) History(ctx context.Context, start, end time.Time) ([]E
 }
 
 // decodeList decodes a JSON array, an object {"value": [...]}, a single
-// object (as a list of one) or an empty body (as an empty list).
+// object (as a list of one) or an empty body (as an empty list). The value
+// of "value" must be an array or null; it is not unwrapped again.
 func decodeList[T any](raw json.RawMessage) ([]T, error) {
+	return decodeListDepth[T](raw, true)
+}
+
+func decodeListDepth[T any](raw json.RawMessage, unwrap bool) ([]T, error) {
 	raw = bytes.TrimSpace(raw)
 	out := []T{}
 	switch {
@@ -156,9 +162,12 @@ func decodeList[T any](raw json.RawMessage) ([]T, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
 	}
+	if !unwrap {
+		return nil, errors.New("bcadmin: decoding response: \"value\" is not a list")
+	}
 	for k, v := range fields {
 		if strings.EqualFold(k, "value") {
-			return decodeList[T](v)
+			return decodeListDepth[T](v, false)
 		}
 	}
 	var one T

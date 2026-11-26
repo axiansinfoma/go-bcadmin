@@ -42,8 +42,8 @@ func (s *SupportService) Contact(ctx context.Context, family, environment string
 }
 
 // SetContact sets the support contact of the environment family/environment
-// and returns the stored contact. All fields are sent, so empty fields clear
-// the stored values.
+// and returns the stored contact. All fields are sent, including empty ones;
+// the documentation does not say how the service treats empty values.
 //
 // PUT /support/applications/{applicationFamily}/environments/{environmentName}/supportcontact.
 func (s *SupportService) SetContact(ctx context.Context, family, environment string, contact SupportContact) (*SupportContact, error) {
@@ -221,7 +221,8 @@ type OutageReportResult struct {
 // ReportOutage reports that the environment family/environment is not
 // accessible. Check the result's CreationStatus: the service can answer
 // with status Error instead of an error response. The request is not
-// retried on server errors, so a failure does not report twice.
+// retried on server errors (unless ClientOptions.RetryNonIdempotent is set),
+// so a failure does not report twice.
 //
 // POST /support/applications/{applicationFamily}/environments/{environmentName}/reportoutage.
 func (s *SupportService) ReportOutage(ctx context.Context, family, environment string, report OutageReport) (*OutageReportResult, error) {

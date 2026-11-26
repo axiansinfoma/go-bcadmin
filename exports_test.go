@@ -212,3 +212,12 @@ func TestHistorySingleObject(t *testing.T) {
 		t.Errorf("History() on an empty body = %#v, %v; want an empty list", h, err)
 	}
 }
+
+func TestHistoryNestedValueIsAnError(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "exports/history", http.StatusOK, map[string]any{"value": map[string]any{"value": []any{}}})
+	if _, err := srv.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now()); err == nil {
+		t.Error("nested value object: no error")
+	}
+}
