@@ -169,6 +169,10 @@ func (c *Client) send(req *policy.Request, out any) error {
 		}
 		return newResponseError(resp, payload)
 	}
+	if r, ok := out.(*rawPayload); ok {
+		*r = append((*r)[:0], payload...)
+		return nil
+	}
 	if out != nil && len(bytes.TrimSpace(payload)) > 0 {
 		if err := json.Unmarshal(payload, out); err != nil {
 			return cleanErr(fmt.Errorf("bcadmin: decoding response of %s %s: %w", req.Raw().Method, req.Raw().URL.EscapedPath(), err))
@@ -423,3 +427,10 @@ func (c *Client) callQuery(ctx context.Context, method, template string, segment
 	}
 	return c.do(ctx, method, u, body, out)
 }
+
+// blank reports whether s is empty or only white space.
+func blank(s string) bool { return strings.TrimSpace(s) == "" }
+
+// rawPayload is an out value for send that receives the successful response
+// body as is, without decoding, for endpoints whose response is undocumented.
+type rawPayload []byte

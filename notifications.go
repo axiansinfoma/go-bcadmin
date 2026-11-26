@@ -54,7 +54,7 @@ func (s *NotificationsService) Recipients(ctx context.Context) ([]NotificationRe
 //
 // PUT /settings/notification/recipients.
 func (s *NotificationsService) AddRecipient(ctx context.Context, email, name string) (*NotificationRecipient, error) {
-	if trimmed(email) || trimmed(name) {
+	if blank(email) || blank(name) {
 		return nil, errors.New("bcadmin: recipient email and name are required")
 	}
 	body := struct {

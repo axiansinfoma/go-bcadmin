@@ -94,8 +94,8 @@ type OutageQuestion struct {
 	// Sequence is the order in which the question is asked.
 	Sequence int `json:"sequence"`
 	// ParentID is the ID of a toggle question; this question is only asked
-	// when that toggle is true. The documentation types it as a string; a
-	// number is decoded to its digits.
+	// when that toggle is true. The documentation types it as a string;
+	// other JSON values are kept as their JSON text.
 	ParentID string `json:"parentId"`
 	ID       string `json:"id"`
 	// DefaultValue is the value if the question is not answered.
@@ -110,8 +110,8 @@ type OutageQuestion struct {
 	Multiline bool `json:"multiline"`
 }
 
-// UnmarshalJSON decodes a question; parentId may be a string, a number or
-// null.
+// UnmarshalJSON decodes a question; a parentId that is not a string is
+// kept as its JSON text, so one odd question does not fail the list.
 func (q *OutageQuestion) UnmarshalJSON(data []byte) error {
 	type plain OutageQuestion
 	var v struct {
@@ -131,7 +131,7 @@ func (q *OutageQuestion) UnmarshalJSON(data []byte) error {
 	case p[0] == '-' || (p[0] >= '0' && p[0] <= '9'):
 		q.ParentID = string(p)
 	default:
-		return errors.New("bcadmin: outage question parentId is neither a string nor a number")
+		q.ParentID = string(p) // undocumented type: keep the JSON text
 	}
 	return nil
 }
@@ -227,7 +227,7 @@ type OutageReportResult struct {
 //
 // POST /support/applications/{applicationFamily}/environments/{environmentName}/reportoutage.
 func (s *SupportService) ReportOutage(ctx context.Context, family, environment string, report OutageReport) (*OutageReportResult, error) {
-	if trimmed(report.OutageType) {
+	if blank(report.OutageType) {
 		return nil, errors.New("bcadmin: OutageReport.OutageType is required")
 	}
 	for _, r := range report.Phone {

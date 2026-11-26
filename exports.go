@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
@@ -70,7 +69,7 @@ type ExportOptions struct {
 //
 // POST /exports/applications/{applicationFamily}/environments/{environmentName}.
 func (s *ExportsService) Start(ctx context.Context, family, environment string, opts ExportOptions) (*Operation, error) {
-	if opts.StorageAccountSASURI == "" || opts.Container == "" || opts.Blob == "" {
+	if blank(opts.StorageAccountSASURI) || blank(opts.Container) || blank(opts.Blob) {
 		return nil, errors.New("bcadmin: ExportOptions.StorageAccountSASURI, Container and Blob are required")
 	}
 	u, err := url.Parse(opts.StorageAccountSASURI)
@@ -79,15 +78,15 @@ func (s *ExportsService) Start(ctx context.Context, family, environment string, 
 		// SAS token.
 		return nil, errors.New("bcadmin: ExportOptions.StorageAccountSASURI must be an https URL with a SAS token")
 	}
-	var op *Operation
+	var raw rawPayload
 	if err := s.c.call(ctx, http.MethodPost, "exports/applications/{}/environments/{}",
-		[]string{family, environment}, opts, &op); err != nil {
+		[]string{family, environment}, opts, &raw); err != nil {
 		return nil, err
 	}
-	if op != nil && op.ID == "" {
-		return nil, nil
-	}
-	return op, nil
+	// The export was accepted (2xx). The response is not documented, so any
+	// body that is not an operation is ignored rather than turned into an
+	// error that would invite a second export.
+	return operationIn(raw), nil
 }
 
 // ExportHistoryEntry is a database export of the tenant.
@@ -176,5 +175,43 @@ func (e *Environment) ExportMetrics(ctx context.Context) (*ExportMetrics, error)
 	return s.c.Exports().Metrics(ctx, e.ApplicationFamily, e.Name)
 }
 
-// trimmed reports whether s is empty after trimming spaces.
-func trimmed(s string) bool { return strings.TrimSpace(s) == "" }
+// String returns the options with the SAS token of the URI masked, so
+// formatting them (also with %v and %+v) does not print the secret.
+func (o ExportOptions) String() string {
+	return fmt.Sprintf("{StorageAccountSASURI:%s Container:%s Blob:%s}", maskQuery(o.StorageAccountSASURI), o.Container, o.Blob)
+}
+
+// GoString is String for %#v.
+func (o ExportOptions) GoString() string { return "bcadmin.ExportOptions" + o.String() }
+
+// maskQuery returns u with its query replaced by "REDACTED", or "REDACTED"
+// if u cannot be parsed.
+func maskQuery(u string) string {
+	if u == "" {
+		return ""
+	}
+	p, err := url.Parse(u)
+	if err != nil {
+		return "REDACTED"
+	}
+	if p.RawQuery != "" {
+		p.RawQuery = "REDACTED"
+	}
+	p.User = nil
+	p.Fragment = ""
+	return p.String()
+}
+
+// operationIn returns the operation in body, or nil if body is not a JSON
+// object with an operation ID.
+func operationIn(body []byte) *Operation {
+	body = bytes.TrimSpace(body)
+	var op Operation
+	if len(body) == 0 || body[0] != '{' {
+		return nil
+	}
+	if err := json.Unmarshal(body, &op); err != nil || op.ID == "" {
+		return nil
+	}
+	return &op
+}

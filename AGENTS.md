@@ -133,8 +133,11 @@ make check    # tidy, lint, test, vuln
   `logCategory` (the names in the documented route; the parameter table on
   the same page uses other names). Rows keep numbers as `json.Number`.
 - Database exports: the SAS URI is a secret; validation errors never include
-  it (nor `url.Parse` errors, which quote it). The start response is not
-  documented: an operation is returned if the body has one, otherwise nil.
+  it (nor `url.Parse` errors, which quote it), and `ExportOptions` masks it
+  when formatted. The start response is not documented: it is read as
+  `rawPayload` (send does not decode it) and an operation is returned if the
+  body is one; any other 2xx body gives nil, never an error that would
+  invite a second export from the monthly quota.
   Export history is a POST with `start`/`end` query parameters, deprecated
   from v2.30 (refused there); it accepts a bare array or `{"value": [...]}`
   (`decodeList`).

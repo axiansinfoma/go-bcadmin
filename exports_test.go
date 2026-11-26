@@ -2,6 +2,7 @@ package bcadmin_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -108,5 +109,35 @@ func TestHistoryAcceptsBareArray(t *testing.T) {
 	h, err := srv.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	if err != nil || len(h) != 2 || h[1].EnvironmentName != "b" {
 		t.Errorf("History() = %+v, %v", h, err)
+	}
+}
+
+// TestExportStartIgnoresUnexpectedBodies checks that an accepted export is
+// not reported as an error when the undocumented response is no operation.
+func TestExportStartIgnoresUnexpectedBodies(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{`"Export queued"`, `true`, `[{"id":"x"}]`, `{"status":"Accepted"}`, `Accepted`} {
+		srv := bcadmintest.NewServer(t)
+		srv.Handle(http.MethodPost, "exports/applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		})
+		op, err := srv.NewClient(t).Exports().Start(context.Background(), bc, "sb", bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: "c", Blob: "b"})
+		if err != nil || op != nil {
+			t.Errorf("body %s: Start() = %+v, %v; want nil, nil", body, op, err)
+		}
+	}
+}
+
+func TestExportOptionsMaskSASToken(t *testing.T) {
+	t.Parallel()
+	o := bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: "c", Blob: "b"}
+	for _, s := range []string{fmt.Sprint(o), fmt.Sprintf("%+v %#v %s", o, o, o), fmt.Sprintf("%v", &o)} {
+		if strings.Contains(s, "SECRET") || !strings.Contains(s, "contosoexports.blob.core.windows.net") {
+			t.Errorf("formatted options = %s", s)
+		}
+	}
+	if _, err := bcadmintest.NewServer(t).NewClient(t).Exports().Start(context.Background(), bc, "sb", bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: " ", Blob: "b"}); err == nil {
+		t.Error("blank container: no error")
 	}
 }
