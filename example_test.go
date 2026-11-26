@@ -137,18 +137,12 @@ func ExampleAppsService_Install() {
 
 func ExampleAppsService_InstallPTE() {
 	var env *bcadmin.Environment // from client.Environments().Get
+	ctx := context.Background()
 	f, err := os.Open("Contoso_MyApp_1.0.0.0.app")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer f.Close()
-	if err := installPTE(context.Background(), env, f); err != nil {
-		fmt.Println(err)
-	}
-}
-
-// installPTE installs the per-tenant extension in f in env.
-func installPTE(ctx context.Context, env *bcadmin.Environment, f *os.File) error {
 	// The file is streamed, not loaded into memory.
 	poller, err := env.Apps().InstallPTE(ctx, f, bcadmin.InstallPTEOptions{
 		FileName:           "Contoso_MyApp_1.0.0.0.app",
@@ -156,19 +150,19 @@ func installPTE(ctx context.Context, env *bcadmin.Environment, f *os.File) error
 		AcceptISVEULA:      true,
 	})
 	if err != nil {
-		return err
+		fmt.Println(err)
+		return
 	}
 	// Return as soon as the installation is scheduled for the update window.
 	op, err := poller.Wait(ctx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
-	if errors.Is(err, bcadmin.ErrOperationScheduled) {
+	switch {
+	case errors.Is(err, bcadmin.ErrOperationScheduled):
 		fmt.Println("scheduled for the update window")
-		return nil
+	case err != nil:
+		fmt.Println(err)
+	default:
+		fmt.Println(op.Status) // already done, for example when the window was open
 	}
-	if err != nil {
-		return err
-	}
-	fmt.Println(op.Status) // already done, for example when the window was open
-	return nil
 }
 
 func ExampleUpdatesService_Select() {
@@ -179,13 +173,22 @@ func ExampleUpdatesService_Select() {
 		log.Fatal(err)
 	}
 	for _, u := range updates {
-		if !u.Available {
+		if !u.Available || !u.TargetVersionType.Is(bcadmin.TargetVersionGA) {
 			continue
 		}
-		// Start in 12 hours at the earliest; outside the environment's update
-		// window the update starts in the next window.
+		// Start in 12 hours at the earliest, but not after the latest date
+		// the service allows. Outside the update window the update starts in
+		// the next window, because it may not ignore the window.
 		start := time.Now().Add(12 * time.Hour)
-		if err := env.Updates().Select(ctx, u.TargetVersion, &bcadmin.ScheduleUpdateOptions{SelectedDateTime: start}); err != nil {
+		if d := u.ScheduleDetails; d != nil && d.LatestSelectableDateTime != nil && d.LatestSelectableDateTime.Before(start) {
+			start = d.LatestSelectableDateTime.Time
+		}
+		ignoreWindow := false
+		if err := env.Updates().Select(ctx, u.TargetVersion, &bcadmin.ScheduleUpdateOptions{
+			TargetVersionType:  u.TargetVersionType,
+			SelectedDateTime:   start,
+			IgnoreUpdateWindow: &ignoreWindow,
+		}); err != nil {
 			log.Fatal(err)
 		}
 		fmt.Println("selected", u.TargetVersion)

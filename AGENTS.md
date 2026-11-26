@@ -191,8 +191,8 @@ make check    # tidy, lint, test, vuln
 - Integration tests must stay read-only and must not log tenant data
   (names, IDs, emails); log counts. Error messages of failed calls can
   contain the environment name and the API's message; they stay in local
-  output, and README tells users to redact them before sharing. Anything that writes needs an explicit
-  opt-in from the person running them.
+  output, and README tells users to redact them before sharing. Anything
+  that writes needs an explicit opt-in from the person running them.
 - `bcadmintest` patterns use `http.ServeMux` syntax; `applications/` needs
   `applications/{$}` to match only that path.
 - The stateful fakes in `bcadmintest` follow the documented behavior and

@@ -397,7 +397,9 @@ make integration
 ## Endpoint coverage
 
 API version **v2.29**. All documented endpoints are implemented (✅). The
-legacy `/upgrade` endpoints, which Microsoft no longer documents, are not.
+legacy environment upgrade endpoints, which the update endpoints replaced and
+Microsoft no longer documents, are not (the `settings/upgrade` update window
+endpoints are).
 
 | Area | Endpoints | Methods | Since | Status |
 | --- | --- | --- | --- | --- |
