@@ -1,13 +1,13 @@
 package bcadmintest
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,29 +23,39 @@ import (
 // every environment ([Apps.Install]); environments need not exist in an
 // [Environments] fake.
 //
-// Install, update and uninstall operations started through the API finish
-// after SetPollsUntilDone requests of the single operation
-// (GET apps/{appId}/operations/{id}) and then change the installed apps.
-// Operations started with useEnvironmentUpdateWindow, and PTE uploads with a
-// deployment schedule other than Immediate, stay Scheduled until
-// [Apps.RunScheduled]; they can be canceled meanwhile (update/cancel,
-// removeScheduledPteVersion).
+// Install, update and uninstall operations started through the API start
+// Running and finish after SetPollsUntilDone requests of the single
+// operation (GET apps/{appId}/operations/{id}); then they change the
+// installed apps. Operations started with useEnvironmentUpdateWindow, and
+// PTE uploads with a deployment schedule other than Immediate, start
+// Scheduled and wait for [Apps.RunScheduled]; they can be canceled meanwhile
+// (update/cancel, removeScheduledPteVersion). Several scheduled versions of
+// a PTE can wait at once, and uninstalling a PTE keeps them, as documented.
+// Dependencies an operation installs or updates are never downgraded when a
+// scheduled operation runs later.
 //
 // Operations carry both version pairs (sourceAppVersion/targetAppVersion and
 // sourceVersion/targetVersion), as the different app endpoints return one or
-// the other. Whether the service lists the operation of a PTE that is
+// the other; sourceAppVersion is empty for PTE installs, as documented. PTE
+// operations have parameters with the app's name, publisher, schedule and
+// sync mode. Whether the service lists the operation of a PTE that is
 // scheduled but not yet installed under apps/{appId}/operations is not
 // documented; the fake does.
 //
 // Like the service, the fake requires acceptIsvEula for installs, refuses
 // missing dependencies (and dependents on uninstall) with code
 // EntityValidationFailed and the apps in data.requirements unless the
-// request asks to handle them, and allows one running operation per app.
-// Where the documentation names no error code, it uses appNotFound (404),
-// appNotInstalled (404), appAlreadyInstalled (409), appOperationInProgress
-// (409), versionNotFound (400), invalidTargetVersion (400), eulaNotAccepted
-// (400), appCannotBeUninstalled (400), operationNotScheduled (400) and
-// invalidInput (400); invalid JSON bodies get requestBodyRequired (400). It is safe for concurrent use.
+// request asks to handle them, allows one running operation per app, and
+// answers removeScheduledPteVersion for an unknown entry with
+// ResourceDoesNotExist (404). Where the documentation names no error code,
+// it uses appNotFound (404), appNotInstalled (404), operationNotFound (404),
+// appAlreadyInstalled (409), appOperationInProgress (409), versionNotFound
+// (400), invalidTargetVersion (400), eulaNotAccepted (400),
+// appCannotBeUninstalled (400), operationNotScheduled (400) and invalidInput
+// (400, also for unknown deploymentSchedule and syncMode values); invalid
+// JSON bodies get requestBodyRequired (400).
+//
+// It is safe for concurrent use.
 type Apps struct {
 	mu        sync.Mutex
 	catalog   map[string][]App                            // key: lower(appId); versions ascending
@@ -133,13 +143,14 @@ func (a *Apps) FailNextOperation(message string) {
 }
 
 // Publish adds a version of a global app to the catalog, replacing the same
-// version if it was published before. Installs and updates can only use
+// version (compared numerically, so "1.0" equals "1.0.0.0") if it was
+// published before. Installs and updates can only use
 // published versions.
 func (a *Apps) Publish(app App) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	key := strings.ToLower(app.AppID)
-	versions := slices.DeleteFunc(a.catalog[key], func(v App) bool { return v.Version == app.Version })
+	versions := slices.DeleteFunc(a.catalog[key], func(v App) bool { return compareVersions(v.Version, app.Version) == 0 })
 	versions = append(versions, cloneApp(app))
 	slices.SortFunc(versions, func(x, y App) int { return compareVersions(x.Version, y.Version) })
 	a.catalog[key] = versions
@@ -157,7 +168,10 @@ func (a *Apps) AddPTEFile(fileName string, app App) {
 
 // Install stores app as installed in the environment family/environment,
 // replacing an app with the same ID. Empty State defaults to Installed and
-// empty AppType to global.
+// empty AppType to global. CanBeUninstalled is stored as given: set it to
+// true for apps a test uninstalls. The fake knows the dependencies of a
+// stored app only when its version is published ([Apps.Publish]) or a
+// registered PTE file ([Apps.AddPTEFile]).
 func (a *Apps) Install(family, environment string, app bcadmin.InstalledApp) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -245,7 +259,7 @@ func (a *Apps) published(appID, version string) (App, bool) {
 		return versions[len(versions)-1], true
 	}
 	for _, v := range versions {
-		if v.Version == version {
+		if compareVersions(v.Version, version) == 0 {
 			return v, true
 		}
 	}
@@ -253,9 +267,15 @@ func (a *Apps) published(appID, version string) (App, bool) {
 }
 
 // busy reports whether an operation on appID in the environment key is
-// scheduled or running. a.mu must be held.
-func (a *Apps) busy(key, appID string) bool {
+// scheduled or running. With ignoreHeldPTE, PTE installs that wait for
+// their schedule do not count: the service keeps several scheduled
+// versions of a PTE and keeps them when the PTE is uninstalled. a.mu must
+// be held.
+func (a *Apps) busy(key, appID string, ignoreHeldPTE bool) bool {
 	for _, o := range a.ops {
+		if ignoreHeldPTE && o.heldPTEInstall() {
+			continue
+		}
 		if o.env == key && strings.EqualFold(o.app.AppID, appID) && !o.op.Status.Terminal() {
 			return true
 		}
@@ -263,43 +283,68 @@ func (a *Apps) busy(key, appID string) bool {
 	return false
 }
 
-// missing returns the dependencies of app that are not installed in at
-// least their minimum version, as requirements, and the catalog versions
-// that would satisfy them. Dependencies of dependencies are included. It
-// returns ok false with the requirement of a dependency that is not in the
-// catalog. a.mu must be held.
+// missing returns the dependencies of app, direct and transitive, that are
+// not installed in at least the highest minimum version any path requires,
+// as requirements, and the catalog versions (always the latest) that would
+// satisfy them. ok is false when a dependency cannot be satisfied from the
+// catalog; its requirement then names the minimum version. a.mu must be
+// held.
 func (a *Apps) missing(key string, app App) (reqs []bcadmin.AppRequirement, fix []App, ok bool) {
-	seen := map[string]bool{}
-	var walk func(App) bool
-	walk = func(app App) bool {
-		for _, d := range app.Dependencies {
+	need := map[string]string{} // lower(appId): highest required minimum version
+	planned := map[string]App{} // lower(appId): version to install or update to
+	var order []string          // planned or unresolvable app IDs, in discovery order
+	unresolvable := map[string]bool{}
+	ids := map[string]string{} // lower(appId): appId as given
+	planned[strings.ToLower(app.AppID)] = app
+	queue := []App{app}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, d := range cur.Dependencies {
 			id := strings.ToLower(d.AppID)
-			if seen[id] {
+			ids[id] = d.AppID
+			if compareVersions(d.MinVersion, need[id]) > 0 {
+				need[id] = d.MinVersion
+			}
+			have := ""
+			if p, ok := planned[id]; ok {
+				have = p.Version
+			} else if inst := a.installed[key][id]; inst != nil {
+				have = inst.Version
+			}
+			if have != "" && compareVersions(have, need[id]) >= 0 {
 				continue
 			}
-			seen[id] = true
-			inst := a.installed[key][id]
-			if inst != nil && compareVersions(inst.Version, d.MinVersion) >= 0 {
-				continue
+			if !slices.Contains(order, id) {
+				order = append(order, id)
 			}
 			latest, found := a.published(d.AppID, "")
-			if !found || compareVersions(latest.Version, d.MinVersion) < 0 {
-				reqs = append(reqs, bcadmin.AppRequirement{AppID: d.AppID, Version: d.MinVersion, Type: "Install"})
-				return false
+			if !found || compareVersions(latest.Version, need[id]) < 0 {
+				unresolvable[id] = true
+				delete(planned, id)
+				continue
 			}
-			typ := "Install"
-			if inst != nil {
-				typ = "Update"
-			}
-			reqs = append(reqs, bcadmin.AppRequirement{AppID: latest.AppID, Name: latest.Name, Publisher: latest.Publisher, Version: latest.Version, Type: typ})
-			fix = append(fix, latest)
-			if !walk(latest) {
-				return false
+			if _, done := planned[id]; !done {
+				planned[id] = latest
+				queue = append(queue, latest)
 			}
 		}
-		return true
 	}
-	ok = walk(app)
+	ok = true
+	for _, id := range order {
+		typ := "Install"
+		if a.installed[key][id] != nil {
+			typ = "Update"
+		}
+		if unresolvable[id] {
+			ok = false
+			reqs = append(reqs, bcadmin.AppRequirement{AppID: ids[id], Version: need[id], Type: typ})
+			continue
+		}
+		p := planned[id]
+		reqs = append(reqs, bcadmin.AppRequirement{AppID: p.AppID, Name: p.Name, Publisher: p.Publisher, Version: p.Version, Type: typ})
+		fix = append(fix, p)
+	}
 	return reqs, fix, ok
 }
 
@@ -358,9 +403,9 @@ func requirementsError(w http.ResponseWriter, message string, reqs []bcadmin.App
 }
 
 // start records a new operation of the given kind (install, update,
-// uninstall) and writes it. It is Scheduled and held when scheduleKind is
-// not Immediate. a.mu must be held.
-func (a *Apps) start(w http.ResponseWriter, r *http.Request, kind string, app App, source string, scheduleKind string, pte bool, extras []App) {
+// uninstall) and writes it. It is Running when scheduleKind is Immediate,
+// otherwise Scheduled and held until RunScheduled. a.mu must be held.
+func (a *Apps) start(w http.ResponseWriter, r *http.Request, kind string, app App, source string, scheduleKind string, pte bool, extras []App, params map[string]any) {
 	a.nextID++
 	now := time.Now().UTC()
 	op := bcadmin.Operation{
@@ -376,6 +421,11 @@ func (a *Apps) start(w http.ResponseWriter, r *http.Request, kind string, app Ap
 		ScheduleKind:     scheduleKind,
 		EnvironmentName:  r.PathValue("env"),
 		ProductFamily:    r.PathValue("family"),
+		Parameters:       params,
+	}
+	if scheduleKind == "Immediate" {
+		op.Status = bcadmin.OperationStatusRunning
+		op.StartedOn = &bcadmin.Time{Time: now}
 	}
 	if kind == "uninstall" {
 		op.TargetAppVersion, op.TargetVersion = "", ""
@@ -435,6 +485,11 @@ func (a *Apps) advance(o *appOperation) {
 		delete(apps, key)
 	default:
 		for _, d := range o.extras {
+			// A dependency may have been updated while the operation was
+			// scheduled; never downgrade it.
+			if inst := apps[strings.ToLower(d.AppID)]; inst != nil && compareVersions(inst.Version, d.Version) >= 0 {
+				continue
+			}
 			a.put(apps, d, false, o)
 		}
 		a.put(apps, o.app, o.pte, o)
@@ -526,7 +581,7 @@ func (a *Apps) handleInstall(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusConflict, "appAlreadyInstalled", "app "+appID+" is already installed")
 		return
 	}
-	if a.busy(key, appID) {
+	if a.busy(key, appID, false) {
 		WriteError(w, http.StatusConflict, "appOperationInProgress", "another operation on app "+appID+" is in progress")
 		return
 	}
@@ -540,7 +595,7 @@ func (a *Apps) handleInstall(w http.ResponseWriter, r *http.Request) {
 		requirementsError(w, "The app cannot be installed because of missing dependencies.", reqs)
 		return
 	}
-	a.start(w, r, "install", app, "", schedule(body.UseEnvironmentUpdateWindow), false, fix)
+	a.start(w, r, "install", app, "", schedule(body.UseEnvironmentUpdateWindow), false, fix, nil)
 }
 
 func (a *Apps) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -557,7 +612,7 @@ func (a *Apps) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "appNotInstalled", "app "+appID+" is not installed")
 		return
 	}
-	if a.busy(key, appID) {
+	if a.busy(key, appID, false) {
 		WriteError(w, http.StatusConflict, "appOperationInProgress", "another operation on app "+appID+" is in progress")
 		return
 	}
@@ -579,7 +634,7 @@ func (a *Apps) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		requirementsError(w, "The app cannot be updated because of missing dependencies.", reqs)
 		return
 	}
-	a.start(w, r, "update", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), false, fix)
+	a.start(w, r, "update", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), false, fix, nil)
 }
 
 func (a *Apps) handleCancelUpdate(w http.ResponseWriter, r *http.Request) {
@@ -632,7 +687,7 @@ func (a *Apps) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "appCannotBeUninstalled", "app "+appID+" cannot be uninstalled")
 		return
 	}
-	if a.busy(key, appID) {
+	if a.busy(key, appID, true) {
 		WriteError(w, http.StatusConflict, "appOperationInProgress", "another operation on app "+appID+" is in progress")
 		return
 	}
@@ -650,7 +705,7 @@ func (a *Apps) handleUninstall(w http.ResponseWriter, r *http.Request) {
 		extras = append(extras, App{AppID: d.AppID, Name: d.Name, Publisher: d.Publisher, Version: d.Version})
 	}
 	app := App{AppID: inst.AppID, Name: inst.Name, Publisher: inst.Publisher, Version: inst.Version}
-	a.start(w, r, "uninstall", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), inst.AppType.Is(bcadmin.AppTypeTenant), extras)
+	a.start(w, r, "uninstall", app, inst.Version, schedule(body.UseEnvironmentUpdateWindow), inst.AppType.Is(bcadmin.AppTypeTenant), extras, nil)
 }
 
 func (a *Apps) handleUninstallRequirements(w http.ResponseWriter, r *http.Request) {
@@ -719,8 +774,11 @@ func (a *Apps) handlePTEInstall(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if p.FormName() == "extensionFile" {
-			fileName = filepath.Base(p.FileName())
+			fileName = p.FileName() // already reduced to its base name
 			continue
+		}
+		if !slices.Contains(pteFields, p.FormName()) {
+			continue // NextPart discards the unread part
 		}
 		v, err := io.ReadAll(io.LimitReader(p, 1<<16))
 		if err != nil {
@@ -745,18 +803,28 @@ func (a *Apps) handlePTEInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := envKey(r.PathValue("family"), r.PathValue("env"))
-	if a.busy(key, app.AppID) {
+	if a.busy(key, app.AppID, true) {
 		WriteError(w, http.StatusConflict, "appOperationInProgress", "another operation on app "+app.AppID+" is in progress")
 		return
 	}
-	scheduleKind := fields["deploymentSchedule"]
-	if scheduleKind == "" {
-		scheduleKind = "Immediate"
+	scheduleKind, ok := canonical(fields["deploymentSchedule"], "Immediate", "Immediate", "UpdateWindow", "NextMinorUpdate", "NextMajorUpdate")
+	if !ok {
+		WriteError(w, http.StatusBadRequest, "invalidInput", "invalid deploymentSchedule "+fields["deploymentSchedule"])
+		return
 	}
-	source := ""
-	if inst := a.installed[key][strings.ToLower(app.AppID)]; inst != nil {
-		source = inst.Version
-	} else if scheduleKind != "Immediate" && scheduleKind != "UpdateWindow" {
+	syncMode, ok := canonical(fields["syncMode"], "Add", "Add", "ForceSync")
+	if !ok {
+		WriteError(w, http.StatusBadRequest, "invalidInput", "invalid syncMode "+fields["syncMode"])
+		return
+	}
+	for _, o := range a.ops {
+		if o.env == key && o.heldPTEInstall() && strings.EqualFold(o.app.AppID, app.AppID) &&
+			compareVersions(o.app.Version, app.Version) == 0 && o.op.ScheduleKind == scheduleKind {
+			WriteError(w, http.StatusConflict, "appOperationInProgress", "version "+app.Version+" of app "+app.AppID+" is already scheduled for "+scheduleKind)
+			return
+		}
+	}
+	if inst := a.installed[key][strings.ToLower(app.AppID)]; inst == nil && scheduleKind != "Immediate" && scheduleKind != "UpdateWindow" {
 		WriteError(w, http.StatusBadRequest, "invalidInput", "a new per-tenant extension can only use Immediate or UpdateWindow")
 		return
 	}
@@ -766,7 +834,15 @@ func (a *Apps) handlePTEInstall(w http.ResponseWriter, r *http.Request) {
 		requirementsError(w, "The app cannot be installed because of missing dependencies.", reqs)
 		return
 	}
-	a.start(w, r, "install", app, source, scheduleKind, true, fix)
+	opParams := map[string]any{
+		"appId": app.AppID, "name": app.Name, "publisher": app.Publisher, "targetAppVersion": app.Version,
+		"scheduleKind": scheduleKind, "syncMode": syncMode,
+	}
+	if lang := fields["languageId"]; lang != "" {
+		opParams["languageId"] = lang
+	}
+	// The docs say sourceAppVersion is empty for PTE installs.
+	a.start(w, r, "install", app, "", scheduleKind, true, fix, opParams)
 }
 
 func (a *Apps) handleScheduledPTE(w http.ResponseWriter, r *http.Request) {
@@ -798,7 +874,7 @@ func (a *Apps) handleRemoveScheduledPTE(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	WriteError(w, http.StatusNotFound, "operationNotFound",
+	WriteError(w, http.StatusNotFound, "ResourceDoesNotExist",
 		"no scheduled installation of version "+body.TargetVersion+" ("+string(body.ScheduleKind)+") of app "+r.PathValue("app"))
 }
 
@@ -826,8 +902,8 @@ func compareVersions(x, y string) int {
 		ai, aerr := strconv.Atoi(cmpZero(a))
 		bi, berr := strconv.Atoi(cmpZero(b))
 		if aerr == nil && berr == nil {
-			if ai != bi {
-				return ai - bi
+			if c := cmp.Compare(ai, bi); c != 0 {
+				return c
 			}
 			continue
 		}
@@ -843,4 +919,28 @@ func cmpZero(s string) string {
 		return "0"
 	}
 	return s
+}
+
+// heldPTEInstall reports whether o is a PTE install that waits for its
+// schedule.
+func (o *appOperation) heldPTEInstall() bool {
+	return o.pte && o.kind == "install" && o.held && o.op.Status.Is(bcadmin.OperationStatusScheduled)
+}
+
+// pteFields are the form fields of a pteInstall request the fake reads;
+// other parts are skipped.
+var pteFields = []string{"acceptIsvEula", "installOrUpdateNeededDependencies", "deploymentSchedule", "syncMode", "languageId"}
+
+// canonical returns the allowed value that equals v ignoring case, or def
+// when v is empty. ok is false for other values.
+func canonical(v, def string, allowed ...string) (string, bool) {
+	if v == "" {
+		return def, true
+	}
+	for _, a := range allowed {
+		if strings.EqualFold(v, a) {
+			return a, true
+		}
+	}
+	return "", false
 }
