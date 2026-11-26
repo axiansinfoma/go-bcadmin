@@ -1,0 +1,19 @@
+{
+  "value": [
+    {
+      "appId": "00000000-0000-0000-0000-000000000101",
+      "name": "Contoso Connector",
+      "publisher": "Contoso",
+      "version": "2.2.0.0",
+      "requirements": [
+        {
+          "appId": "00000000-0000-0000-0000-000000000103",
+          "name": "Contoso Base",
+          "publisher": "Contoso",
+          "version": "1.5.0.0",
+          "type": "Update"
+        }
+      ]
+    }
+  ]
+}

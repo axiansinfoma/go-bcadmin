@@ -1,0 +1,16 @@
+{
+  "id": "00000000-0000-0000-0000-000000000401",
+  "type": "install",
+  "sourceAppVersion": "",
+  "targetAppVersion": "1.0.0.6",
+  "status": "running",
+  "createdOn": "2026-11-20T10:00:00Z",
+  "startedOn": "2026-11-20T10:00:01Z",
+  "errorMessage": "",
+  "createdBy": "00000000-0000-0000-0000-000000000900",
+  "canceledBy": "",
+  "creatorPrincipalType": "App",
+  "appId": "00000000-0000-0000-0000-000000000102",
+  "aadTenantId": "00000000-0000-0000-0000-000000000001",
+  "scheduleKind": "Immediate"
+}

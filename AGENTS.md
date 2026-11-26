@@ -14,6 +14,8 @@ Business Central Administration Center API. Read README.md for the user view.
 | `errors.go` | `ResponseError` (API error body pass-through), sentinels, `OperationError`. |
 | `operation.go`, `poller.go` | `Operation`, statuses and types; generic `Poller[T]`. |
 | `tenant.go`, `applications.go`, `environments.go`, ... | One file per API area with its types and service. |
+| `apps.go`, `pte.go`, `updates.go` | Environment-scoped services (`Client.Apps`, `Client.Updates`, `Environment.Apps()`, `Environment.Updates()`); unbound environments give services whose methods return an error. |
+| `internal/multipartbody/` | Seekable multipart body that streams the .app file of a PTE upload. |
 | `environment.go` | The `Environment` object; its methods delegate to `EnvironmentsService`. |
 | `time.go` | `Time`, a tolerant timestamp type; use `*Time` for all timestamps in responses. |
 | `version.go` | `DefaultAPIVersion`; module version for the User-Agent from build info. |
@@ -114,6 +116,24 @@ make check    # tidy, lint, test, vuln
   (`minorTrackable*` constants in environments.go).
 - `Get environment` is documented as wrapped in `{"value": [...]}`, but the
   service returns the object; `EnvironmentsService.Get` accepts both.
+- App and PTE methods whose endpoint has a documented "INTRODUCED IN" version
+  later than v2.0 check it with `AppsService.needVersion` before sending, so an
+  old client gets a clear error instead of a 404 that looks like "not found".
+  Endpoints without a documented version are not checked.
+- A single app operation (`apps/{appId}/operations/{id}`) is documented as a
+  plain object; `AppsService.GetOperation` also accepts the wrapped list form
+  and checks the operation ID in both.
+- The PTE upload body must be seekable (azcore sets Content-Length and
+  rewinds it on retry); never read the file into memory. azcore reuses one
+  body object for all attempts while net/http may still be writing an
+  abandoned attempt (early 429), so `freshBodyPolicy` (after the bearer
+  policy) gives each attempt its own reader from `multipartbody.Body.NewReader`,
+  which reads the file with `ReadAt`. `TestInstallPTERetry` (TLS, early 429)
+  catches regressions under `-race`. `Body.Close` (deferred in `InstallPTE`)
+  waits for reads in progress and fails later ones, so the caller's file is
+  never read after `InstallPTE` returns. A caller's `PerRetryPolicies` run
+  after `freshBodyPolicy`; one that calls `RewindBody` brings back the shared
+  body.
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no
   tags); check that Renovate proposes updates for it, otherwise bump it by
   hand.

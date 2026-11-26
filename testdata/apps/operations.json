@@ -1,0 +1,15 @@
+{
+  "value": [
+    {
+      "id": "00000000-0000-0000-0000-000000000301",
+      "createdOn": "2026-11-20T10:00:00Z",
+      "startedOn": "2026-11-20T10:01:00Z",
+      "completedOn": "2026-11-20T10:05:00Z",
+      "status": "Succeeded",
+      "sourceVersion": "",
+      "targetVersion": "2.1.0.0",
+      "type": "install",
+      "errorMessage": ""
+    }
+  ]
+}

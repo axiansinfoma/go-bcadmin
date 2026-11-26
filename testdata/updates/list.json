@@ -1,0 +1,39 @@
+{
+  "value": [
+    {
+      "targetVersion": "26.1",
+      "available": true,
+      "selected": true,
+      "scheduleDetails": {
+        "updateStatus": "scheduled",
+        "latestSelectableDateTime": "2026-12-31T00:00:00Z",
+        "selectedDateTime": "2026-12-05T22:00:00Z",
+        "ignoreUpdateWindow": false,
+        "rolloutStatus": "Active"
+      },
+      "targetVersionType": "GA"
+    },
+    {
+      "targetVersion": "26.2",
+      "available": true,
+      "selected": false,
+      "scheduleDetails": {
+        "latestSelectableDateTime": "2027-01-31T00:00:00Z",
+        "selectedDateTime": null,
+        "ignoreUpdateWindow": false,
+        "rolloutStatus": "Active"
+      },
+      "targetVersionType": "GA"
+    },
+    {
+      "targetVersion": "26.3",
+      "available": false,
+      "selected": false,
+      "expectedAvailability": {
+        "month": 2,
+        "year": 2027
+      },
+      "targetVersionType": "GA"
+    }
+  ]
+}
