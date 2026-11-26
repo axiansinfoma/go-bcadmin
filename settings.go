@@ -142,7 +142,8 @@ func (s *SettingsService) SetUpdateWindow(ctx context.Context, opts SetUpdateWin
 // SetAppInsightsKey sets the Application Insights connection string or
 // instrumentation key of the environment. The environment must be Active;
 // the service restarts it to apply the key, so run this outside working
-// hours.
+// hours. The key is sent in the request body: with
+// ClientOptions.Logging.IncludeBody set, it appears in the logs.
 //
 // POST /applications/{applicationFamily}/environments/{environmentName}/settings/appinsightskey.
 func (s *SettingsService) SetAppInsightsKey(ctx context.Context, key string) error {

@@ -10,7 +10,7 @@ Business Central Administration Center API. Read README.md for the user view.
 | `doc.go` | Package documentation. |
 | `client.go` | `Client`, `NewClient`, `ClientOptions`, `ForTenant`. Builds the azcore pipeline (bearer token, retry, telemetry). |
 | `transport.go` | Default HTTP client (TLS 1.2, same-origin redirects) and the response size limit. |
-| `request.go` | `Do`, path building, request sending, error mapping, retry rules for POST/PATCH, `@odata.nextLink` pagination (`list`, `listAll`). |
+| `request.go` | `Do`, path building, query strings (`callQuery`), request sending, error mapping, retry rules for POST/PATCH, API version checks (`needVersion`), `@odata.nextLink` pagination (`list`, `listAll`). |
 | `errors.go` | `ResponseError` (API error body pass-through), sentinels, `OperationError`. |
 | `operation.go`, `poller.go` | `Operation`, statuses and types; generic `Poller[T]`. |
 | `tenant.go`, `applications.go`, `environments.go`, ... | One file per API area with its types and service. |
@@ -49,7 +49,9 @@ make check    # tidy, lint, test, vuln
   results and an `error`. Long-running operations return `*Poller[T]`.
 - **Paths** are built with `path(template, segments...)` / `c.call(...)`; the
   template uses `{}` for caller-supplied segments, which are validated and
-  escaped. Never build paths with `fmt.Sprintf`.
+  escaped. Never build paths with `fmt.Sprintf`. Query strings go through
+  `c.callQuery(..., url.Values, ...)`, which encodes the values and leaves
+  empty ones out; never append `"?"` to a template.
 - **Lists** use `listAll[T]` (slice) or `list[T]` (`iter.Seq2`); both follow
   `@odata.nextLink` and accept bare JSON arrays.
 - **JSON**: request fields use the exact casing of the docs (some bodies are

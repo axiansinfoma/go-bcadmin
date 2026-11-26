@@ -111,8 +111,9 @@ type TelemetryColumn struct {
 }
 
 // Telemetry is the result of a telemetry query: column headers and rows of
-// raw values. Numbers are decoded as json.Number, so large values keep
-// their precision; strings and nulls as string and nil.
+// raw JSON values. Numbers are decoded as json.Number, so large values keep
+// their precision; other values as string, bool, nil, []any or
+// map[string]any.
 type Telemetry struct {
 	Columns []TelemetryColumn `json:"queryColumns"`
 	Rows    [][]any           `json:"queryResults"`
