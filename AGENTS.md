@@ -16,6 +16,7 @@ Business Central Administration Center API. Read README.md for the user view.
 | `tenant.go`, `applications.go`, `environments.go`, ... | One file per API area with its types and service. |
 | `apps.go`, `pte.go`, `updates.go`, `settings.go`, `sessions.go` | Environment-scoped services (`Client.Apps`, `Client.Updates`, `Client.Settings`, `Client.Sessions` and the same methods on `Environment`); unbound environments give services whose methods return an error. |
 | `telemetry.go` | `EnvironmentsService.Telemetry` and `Environment.Telemetry`. |
+| `transfers.go`, `authorizedapps.go` | `Client.Transfers` (environment transfers between Entra tenants) and `Client.AuthorizedApps`. |
 | `exports.go`, `notifications.go`, `support.go` | Tenant-level services (`Client.Exports`, `Client.Notifications`, `Client.Support`) with family/environment arguments where needed, and `Environment` shortcuts. |
 | `internal/multipartbody/` | Seekable multipart body that streams the .app file of a PTE upload. |
 | `environment.go` | The `Environment` object; its methods delegate to `EnvironmentsService`. |
@@ -148,6 +149,17 @@ make check    # tidy, lint, test, vuln
   `withNonIdempotent` so it is not retried on 5xx. Outage report results
   document `creationStatus` value `Error`; callers check it as well as the
   error.
+- Environment transfers (v2.20+, internal administrators only) have
+  PascalCase request bodies (`DestinationEntraTenantId`, `RunAt`,
+  `SourceEntraTenantId`, ...) and return operations; tracking them is not
+  documented, so they return `*Operation`, not a `Poller`; like export
+  start they read the body as `rawPayload` and return nil instead of an
+  error when a 2xx body is not a readable operation. Request and
+  accept are POSTs (not retried on 5xx). `RunAt` is sent as UTC,
+  truncated to whole seconds.
+- `GET authorizedAadApps` returns a bare array (`listAll` handles it);
+  `manageableTenants` is a wrapped list. App client IDs equal to
+  `manageableTenants` are refused so PUT/DELETE cannot address that path.
 - Reported outages use PascalCase keys; outage question `parentId` is
   documented as a string but accepted as a number too.
 - `Session.LogOnDate` stays a string: the docs type it as a string, and a

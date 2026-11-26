@@ -438,7 +438,8 @@ func (c *Client) callQuery(ctx context.Context, method, template string, segment
 func blank(s string) bool { return strings.TrimSpace(s) == "" }
 
 // rawPayload is an out value for send that receives the successful response
-// body as is, without decoding, for endpoints whose response is undocumented.
+// body as is, without decoding, for endpoints whose response is undocumented
+// or whose accepted (2xx) response must never become an error.
 // A 2xx response whose body cannot be read (too large, connection lost)
 // counts as success with an empty payload: the request was accepted, and an
 // error would invite repeating it.
