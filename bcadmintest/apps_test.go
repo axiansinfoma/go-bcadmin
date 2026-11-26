@@ -771,3 +771,49 @@ func TestAppsFakeResults(t *testing.T) {
 		t.Errorf("base after skipped update = %+v", base)
 	}
 }
+
+// TestAppsFakeRemoveScheduledKeepsResult checks that removing a stale
+// scheduled PTE version does not change the installed app's result, and the
+// type of dev dependents.
+func TestAppsFakeRemoveScheduledKeepsResult(t *testing.T) {
+	t.Parallel()
+	fake, apps := newAppsFake(t)
+	for _, v := range []string{"1.0.0.0", "2.0.0.0", "3.0.0.0"} {
+		fake.AddPTEFile("p_"+v+".app", bcadmintest.App{AppID: pteID, Name: "P", Version: v})
+	}
+	ctx := context.Background()
+	upload := func(version string, schedule bcadmin.DeploymentSchedule) *bcadmin.Poller[*bcadmin.Operation] {
+		t.Helper()
+		p, err := apps.InstallPTE(ctx, bytes.NewReader([]byte("app")), bcadmin.InstallPTEOptions{
+			FileName: "p_" + version + ".app", AcceptISVEULA: true, DeploymentSchedule: schedule,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if _, err := upload("1.0.0.0", "").Wait(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	upload("2.0.0.0", bcadmin.DeploymentNextMajorUpdate)
+	last := upload("3.0.0.0", "")
+	if _, err := last.Wait(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apps.RemoveScheduledPTEVersion(ctx, pteID, bcadmin.RemoveScheduledPTEVersionOptions{TargetVersion: "2.0.0.0", ScheduleKind: bcadmin.DeploymentNextMajorUpdate}); err != nil {
+		t.Fatal(err)
+	}
+	a := installed(t, fake)[pteID]
+	if a.Version != "3.0.0.0" || a.LastOperationID != last.ID() || a.LastUpdateAttemptResult != "Succeeded" {
+		t.Errorf("after removing a stale scheduled version = %+v", a)
+	}
+
+	const devID = "00000000-0000-0000-0000-000000000231"
+	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
+	fake.AddPTEFile("dev.app", bcadmintest.App{AppID: devID, Name: "Dev", Version: "1.0.0.0", Dependencies: []bcadmintest.Dependency{{AppID: baseID, MinVersion: "1.0.0.0"}}})
+	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: devID, Name: "Dev", Version: "1.0.0.0", AppType: bcadmin.AppTypeDev})
+	reqs, err := apps.UninstallRequirements(ctx, baseID)
+	if err != nil || len(reqs) != 1 || reqs[0].Type != "DEV" {
+		t.Errorf("UninstallRequirements() = %+v, %v", reqs, err)
+	}
+}

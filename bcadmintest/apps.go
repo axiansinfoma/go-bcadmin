@@ -57,7 +57,9 @@ import (
 // Like the service, the fake requires acceptIsvEula for installs, refuses
 // missing dependencies (and dependents on uninstall) with code
 // EntityValidationFailed and the apps in data.requirements unless the
-// request asks to handle them, allows one running operation per app, and
+// request asks to handle them, accepts one request per app at a time
+// (installing or updating an app as a dependency of another operation is not
+// blocked by the app's own pending operation), and
 // answers removeScheduledPteVersion for an unknown entry with
 // ResourceDoesNotExist (404). Where the documentation names no error code,
 // it uses appNotFound (404), appNotInstalled (404), operationNotFound (404),
@@ -737,7 +739,9 @@ func (a *Apps) cancel(w http.ResponseWriter, o *appOperation) {
 	o.op.CanceledBy = "bcadmintest"
 	o.op.ErrorMessage = "The scheduled operation was canceled."
 	o.op.CompletedOn = &bcadmin.Time{Time: time.Now().UTC()}
-	if inst := a.installed[o.env][strings.ToLower(o.app.AppID)]; inst != nil {
+	// Only a canceled update of a global app is an update attempt of the
+	// installed app; removing a scheduled PTE version does not change it.
+	if inst := a.installed[o.env][strings.ToLower(o.app.AppID)]; inst != nil && o.kind == "update" && !o.pte {
 		inst.State = bcadmin.AppStateInstalled
 		setResult(inst, o, "Canceled")
 	}
@@ -799,8 +803,11 @@ func (a *Apps) handleUninstallRequirements(w http.ResponseWriter, r *http.Reques
 	out := []bcadmin.UninstallRequirement{}
 	for _, d := range a.dependents(key, appID) {
 		typ := "Global"
-		if d.AppType.Is(bcadmin.AppTypeTenant) {
+		switch {
+		case d.AppType.Is(bcadmin.AppTypeTenant):
 			typ = "PTE"
+		case d.AppType.Is(bcadmin.AppTypeDev):
+			typ = "DEV"
 		}
 		out = append(out, bcadmin.UninstallRequirement{
 			AppID: d.AppID, Name: d.Name, Publisher: d.Publisher, Version: d.Version, Type: typ, OperationRequirementType: "Uninstall",
