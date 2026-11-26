@@ -136,8 +136,10 @@ make check    # tidy, lint, test, vuln
   it (nor `url.Parse` errors, which quote it), and `ExportOptions` masks it
   when formatted. The start response is not documented: it is read as
   `rawPayload` (send does not decode it) and an operation is returned if the
-  body is one; any other 2xx body gives nil, never an error that would
-  invite a second export from the monthly quota.
+  body is one; any other 2xx body, and a 2xx body that cannot be read
+  (`acceptedRaw` in send), gives nil, never an error that would invite a
+  second export from the monthly quota. `decodeList` also accepts a single
+  object (the documented history shape).
   Export history is a POST with `start`/`end` query parameters, deprecated
   from v2.30 (refused there); it accepts a bare array or `{"value": [...]}`
   (`decodeList`).

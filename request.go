@@ -152,6 +152,9 @@ func (c *Client) send(req *policy.Request, out any) error {
 		if re, ok := errors.AsType[responseError](err); ok {
 			if r := re.response(); r != nil {
 				_ = r.Body.Close()
+				if acceptedRaw(r, out) {
+					return nil
+				}
 				return responseReadError(req, r, err)
 			}
 		}
@@ -159,6 +162,9 @@ func (c *Client) send(req *policy.Request, out any) error {
 	}
 	payload, err := runtime.Payload(resp)
 	_ = resp.Body.Close()
+	if err != nil && acceptedRaw(resp, out) {
+		return nil
+	}
 	if err != nil {
 		return cleanErr(fmt.Errorf("bcadmin: reading response of %s %s (status %s): %w", req.Raw().Method, req.Raw().URL.EscapedPath(), clean(resp.Status), err))
 	}
@@ -433,4 +439,18 @@ func blank(s string) bool { return strings.TrimSpace(s) == "" }
 
 // rawPayload is an out value for send that receives the successful response
 // body as is, without decoding, for endpoints whose response is undocumented.
+// A 2xx response whose body cannot be read (too large, connection lost)
+// counts as success with an empty payload: the request was accepted, and an
+// error would invite repeating it.
 type rawPayload []byte
+
+// acceptedRaw reports whether resp is a 2xx response for a rawPayload out
+// value, and empties the payload.
+func acceptedRaw(resp *http.Response, out any) bool {
+	p, ok := out.(*rawPayload)
+	if !ok || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false
+	}
+	*p = (*p)[:0]
+	return true
+}

@@ -128,8 +128,6 @@ func (q *OutageQuestion) UnmarshalJSON(data []byte) error {
 	case len(p) == 0 || bytes.Equal(p, []byte("null")):
 	case p[0] == '"':
 		return json.Unmarshal(p, &q.ParentID)
-	case p[0] == '-' || (p[0] >= '0' && p[0] <= '9'):
-		q.ParentID = string(p)
 	default:
 		q.ParentID = string(p) // undocumented type: keep the JSON text
 	}

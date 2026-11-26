@@ -141,3 +141,74 @@ func TestExportOptionsMaskSASToken(t *testing.T) {
 		t.Error("blank container: no error")
 	}
 }
+
+// TestExportStartUnreadableBody checks that an accepted export whose 2xx
+// body cannot be read (cut off, or larger than MaxResponseBytes) is not
+// reported as an error.
+func TestExportStartUnreadableBody(t *testing.T) {
+	t.Parallel()
+	opts := bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: "c", Blob: "b"}
+	t.Run("truncated", func(t *testing.T) {
+		t.Parallel()
+		srv := bcadmintest.NewServer(t)
+		srv.Handle(http.MethodPost, "exports/applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+			conn, buf, err := http.NewResponseController(w).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"id\":")
+			_ = buf.Flush()
+			_ = conn.Close()
+		})
+		op, err := srv.NewClient(t).Exports().Start(context.Background(), bc, "sb", opts)
+		if err != nil || op != nil {
+			t.Errorf("Start() = %+v, %v; want nil, nil", op, err)
+		}
+		if n := len(srv.Requests()); n != 1 {
+			t.Errorf("sent %d requests, want 1", n)
+		}
+	})
+	t.Run("too large", func(t *testing.T) {
+		t.Parallel()
+		srv := bcadmintest.NewServer(t)
+		srv.Handle(http.MethodPost, "exports/applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(strings.Repeat("x", 4096)))
+		})
+		o := srv.ClientOptions()
+		o.MaxResponseBytes = 1024
+		c, err := bcadmin.NewClient(bcadmintest.Credential(), o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if op, err := c.Exports().Start(context.Background(), bc, "sb", opts); err != nil || op != nil {
+			t.Errorf("Start() = %+v, %v; want nil, nil", op, err)
+		}
+	})
+	t.Run("error status still fails", func(t *testing.T) {
+		t.Parallel()
+		srv := bcadmintest.NewServer(t)
+		srv.Handle(http.MethodPost, "exports/applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) {
+			bcadmintest.WriteError(w, http.StatusBadRequest, "exportFailed", "no exports left")
+		})
+		if _, err := srv.NewClient(t).Exports().Start(context.Background(), bc, "sb", opts); bcadmin.ErrorCode(err) != "exportFailed" {
+			t.Errorf("error = %v", err)
+		}
+	})
+}
+
+func TestHistorySingleObject(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "exports/history", http.StatusOK, map[string]any{"environmentName": "a", "user": "u"})
+	h, err := srv.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now())
+	if err != nil || len(h) != 1 || h[0].EnvironmentName != "a" {
+		t.Errorf("History() = %+v, %v", h, err)
+	}
+	empty := bcadmintest.NewServer(t)
+	empty.Handle(http.MethodPost, "exports/history", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	if h, err := empty.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now()); err != nil || h == nil || len(h) != 0 {
+		t.Errorf("History() on an empty body = %#v, %v; want an empty list", h, err)
+	}
+}

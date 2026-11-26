@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -45,8 +46,14 @@ func (s *ExportsService) Metrics(ctx context.Context, family, environment string
 // ExportOptions selects where an environment database is exported to.
 type ExportOptions struct {
 	// StorageAccountSASURI is a SAS URI of the Azure storage account with
-	// read, write, create and delete permissions. It is a secret: it is sent
-	// in the request body and never included in errors from this package.
+	// read, write, create and delete permissions. It is a secret:
+	//   - Validation errors built by this package never include it. Error
+	//     responses from the API are passed through unchanged and could echo
+	//     it; take care when logging them.
+	//   - ExportOptions masks it when formatted with fmt, but not when encoded
+	//     as JSON (for example by a JSON logger).
+	//   - It is sent in the request body, so it appears in the logs when
+	//     ClientOptions.Logging.IncludeBody is set.
 	StorageAccountSASURI string `json:"storageAccountSasUri"`
 	// Container is the name of the container the export creates.
 	Container string `json:"container"`
@@ -131,11 +138,11 @@ func (s *ExportsService) History(ctx context.Context, start, end time.Time) ([]E
 	return decodeList[ExportHistoryEntry](raw)
 }
 
-// decodeList decodes a JSON array, an object {"value": [...]} or an empty
-// body.
+// decodeList decodes a JSON array, an object {"value": [...]}, a single
+// object (as a list of one) or an empty body (as an empty list).
 func decodeList[T any](raw json.RawMessage) ([]T, error) {
 	raw = bytes.TrimSpace(raw)
-	var out []T
+	out := []T{}
 	switch {
 	case len(raw) == 0 || bytes.Equal(raw, []byte("null")):
 		return out, nil
@@ -143,16 +150,22 @@ func decodeList[T any](raw json.RawMessage) ([]T, error) {
 		if err := json.Unmarshal(raw, &out); err != nil {
 			return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
 		}
-	default:
-		var wrapped struct {
-			Value []T `json:"value"`
-		}
-		if err := json.Unmarshal(raw, &wrapped); err != nil {
-			return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
-		}
-		out = wrapped.Value
+		return out, nil
 	}
-	return out, nil
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
+	}
+	for k, v := range fields {
+		if strings.EqualFold(k, "value") {
+			return decodeList[T](v)
+		}
+	}
+	var one T
+	if err := json.Unmarshal(raw, &one); err != nil {
+		return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
+	}
+	return append(out, one), nil
 }
 
 // ExportDatabase exports the environment's database; see
