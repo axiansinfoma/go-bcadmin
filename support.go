@@ -219,8 +219,8 @@ type OutageReportResult struct {
 }
 
 // ReportOutage reports that the environment family/environment is not
-// accessible. Check the result's CreationStatus: the service can answer
-// with status Error instead of an error response. The request is not
+// accessible. CreationStatus is documented with the value Error; check it
+// as well as the returned error. The request is not
 // retried on server errors (unless ClientOptions.RetryNonIdempotent is set),
 // so a failure does not report twice.
 //

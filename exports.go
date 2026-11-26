@@ -6,15 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // ExportsService exports environment databases to Azure storage. Use it
 // through [Client.Exports]. The caller needs the D365 BACKUP/RESTORE
-// permission set in the environment, and the tenant a paid subscription.
+// permission set in the environment.
 type ExportsService struct {
 	c *Client
 }
@@ -50,8 +52,8 @@ type ExportOptions struct {
 	//   - Validation errors built by this package never include it. Error
 	//     responses from the API are passed through unchanged and could echo
 	//     it; take care when logging them.
-	//   - ExportOptions masks it when formatted with fmt, but not when encoded
-	//     as JSON (for example by a JSON logger).
+	//   - ExportOptions masks it when formatted with fmt (with any verb), but
+	//     not when encoded as JSON (for example by a JSON logger).
 	//   - It is sent in the request body, so it appears in the logs when
 	//     ClientOptions.Logging.IncludeBody is set.
 	StorageAccountSASURI string `json:"storageAccountSasUri"`
@@ -64,9 +66,9 @@ type ExportOptions struct {
 
 // Start exports the database of the environment family/environment to Azure
 // storage. Each export uses one of the monthly exports (see
-// [ExportsService.Metrics]); the service refuses an export without a paid
-// subscription, without permission or without exports left (code
-// exportFailed). The documentation does not describe the response; if the
+// [ExportsService.Metrics]). The error code exportFailed is documented as
+// typically meaning no paid subscription, no permission or no exports
+// left. The documentation does not describe the response; if the
 // service returns an operation, it is returned, otherwise the result is nil.
 // Track the export with the environment's operations
 // ([EnvironmentsService.Operations]).
@@ -136,12 +138,17 @@ func (s *ExportsService) History(ctx context.Context, start, end time.Time) ([]E
 	if err := s.c.callQuery(ctx, http.MethodPost, "exports/history", nil, query, nil, &raw); err != nil {
 		return nil, err
 	}
-	return decodeList[ExportHistoryEntry](raw)
+	list, err := decodeList[ExportHistoryEntry](raw)
+	if err != nil {
+		return nil, fmt.Errorf("bcadmin: POST exports/history: %w", cleanErr(err))
+	}
+	return list, nil
 }
 
 // decodeList decodes a JSON array, an object {"value": [...]}, a single
 // object (as a list of one) or an empty body (as an empty list). The value
-// of "value" must be an array or null; it is not unwrapped again.
+// of "value" must be an array or null; it is not unwrapped again. An exact
+// "value" key wins over other casings.
 func decodeList[T any](raw json.RawMessage) ([]T, error) {
 	return decodeListDepth[T](raw, true)
 }
@@ -154,16 +161,19 @@ func decodeListDepth[T any](raw json.RawMessage, unwrap bool) ([]T, error) {
 		return out, nil
 	case raw[0] == '[':
 		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
+			return nil, fmt.Errorf("decoding response: %w", err)
 		}
 		return out, nil
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
+		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 	if !unwrap {
-		return nil, errors.New("bcadmin: decoding response: \"value\" is not a list")
+		return nil, errors.New("decoding response: \"value\" is not a list")
+	}
+	if v, ok := fields["value"]; ok {
+		return decodeListDepth[T](v, false)
 	}
 	for k, v := range fields {
 		if strings.EqualFold(k, "value") {
@@ -172,7 +182,7 @@ func decodeListDepth[T any](raw json.RawMessage, unwrap bool) ([]T, error) {
 	}
 	var one T
 	if err := json.Unmarshal(raw, &one); err != nil {
-		return nil, fmt.Errorf("bcadmin: decoding response: %w", err)
+		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 	return append(out, one), nil
 }
@@ -197,14 +207,28 @@ func (e *Environment) ExportMetrics(ctx context.Context) (*ExportMetrics, error)
 	return s.c.Exports().Metrics(ctx, e.ApplicationFamily, e.Name)
 }
 
-// String returns the options with the SAS token of the URI masked, so
-// formatting them (also with %v and %+v) does not print the secret.
+// String returns the options with the SAS token of the URI masked.
 func (o ExportOptions) String() string {
 	return fmt.Sprintf("{StorageAccountSASURI:%s Container:%s Blob:%s}", maskQuery(o.StorageAccountSASURI), o.Container, o.Blob)
 }
 
-// GoString is String for %#v.
-func (o ExportOptions) GoString() string { return "bcadmin.ExportOptions" + o.String() }
+// GoString returns the options as Go syntax with the SAS token masked.
+func (o ExportOptions) GoString() string {
+	return fmt.Sprintf("bcadmin.ExportOptions{StorageAccountSASURI:%q, Container:%q, Blob:%q}", maskQuery(o.StorageAccountSASURI), o.Container, o.Blob)
+}
+
+// Format implements [fmt.Formatter] so that every verb prints the masked
+// form: %#v prints GoString, %q the quoted String, all other verbs String.
+func (o ExportOptions) Format(f fmt.State, verb rune) {
+	s := o.String()
+	switch {
+	case verb == 'v' && f.Flag('#'):
+		s = o.GoString()
+	case verb == 'q':
+		s = strconv.Quote(s)
+	}
+	_, _ = io.WriteString(f, s)
+}
 
 // maskQuery returns u with its query replaced by "REDACTED", or "REDACTED"
 // if u cannot be parsed.

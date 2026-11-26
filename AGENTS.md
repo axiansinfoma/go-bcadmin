@@ -134,7 +134,7 @@ make check    # tidy, lint, test, vuln
   the same page uses other names). Rows keep numbers as `json.Number`.
 - Database exports: the SAS URI is a secret; validation errors never include
   it (nor `url.Parse` errors, which quote it), and `ExportOptions` masks it
-  when formatted. The start response is not documented: it is read as
+  when formatted (`Format` covers every verb). The start response is not documented: it is read as
   `rawPayload` (send does not decode it) and an operation is returned if the
   body is one; any other 2xx body, and a 2xx body that cannot be read
   (`acceptedRaw` in send), gives nil, never an error that would invite a
@@ -142,10 +142,11 @@ make check    # tidy, lint, test, vuln
   object (the documented history shape).
   Export history is a POST with `start`/`end` query parameters, deprecated
   from v2.30 (refused there); it accepts a bare array or `{"value": [...]}`
-  (`decodeList`).
+  (`decodeList`, exact `value` key first, unwrapped once).
 - Creating a notification recipient is a PUT that creates; it is sent with
-  `withNonIdempotent` so it is not retried on 5xx. Outage reports (POST)
-  can answer 200 with `creationStatus: "Error"`.
+  `withNonIdempotent` so it is not retried on 5xx. Outage report results
+  document `creationStatus` value `Error`; callers check it as well as the
+  error.
 - Reported outages use PascalCase keys; outage question `parentId` is
   documented as a string but accepted as a number too.
 - `Session.LogOnDate` stays a string: the docs type it as a string, and a

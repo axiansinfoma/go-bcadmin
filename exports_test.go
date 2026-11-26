@@ -132,10 +132,16 @@ func TestExportStartIgnoresUnexpectedBodies(t *testing.T) {
 func TestExportOptionsMaskSASToken(t *testing.T) {
 	t.Parallel()
 	o := bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: "c", Blob: "b"}
-	for _, s := range []string{fmt.Sprint(o), fmt.Sprintf("%+v %#v %s", o, o, o), fmt.Sprintf("%v", &o)} {
-		if strings.Contains(s, "SECRET") || !strings.Contains(s, "contosoexports.blob.core.windows.net") {
-			t.Errorf("formatted options = %s", s)
+	formats := []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d", "%t", "%10.3f"}
+	for _, f := range formats {
+		for _, v := range []any{o, &o, []bcadmin.ExportOptions{o}} {
+			if s := fmt.Sprintf(f, v); strings.Contains(s, "SECRET") || !strings.Contains(s, "contosoexports.blob.core.windows.net") {
+				t.Errorf("%s of %T = %s", f, v, s)
+			}
 		}
+	}
+	if got, want := fmt.Sprintf("%#v", o), `bcadmin.ExportOptions{StorageAccountSASURI:"https://contosoexports.blob.core.windows.net/?REDACTED", Container:"c", Blob:"b"}`; got != want {
+		t.Errorf("%%#v = %s, want %s", got, want)
 	}
 	if _, err := bcadmintest.NewServer(t).NewClient(t).Exports().Start(context.Background(), bc, "sb", bcadmin.ExportOptions{StorageAccountSASURI: sasURI, Container: " ", Blob: "b"}); err == nil {
 		t.Error("blank container: no error")
@@ -219,5 +225,30 @@ func TestHistoryNestedValueIsAnError(t *testing.T) {
 	srv.HandleJSON(http.MethodPost, "exports/history", http.StatusOK, map[string]any{"value": map[string]any{"value": []any{}}})
 	if _, err := srv.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now()); err == nil {
 		t.Error("nested value object: no error")
+	}
+}
+
+func TestHistoryPrefersExactValueKey(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.Handle(http.MethodPost, "exports/history", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Value":[{"environmentName":"wrong"}],"value":[{"environmentName":"right"}]}`))
+	})
+	for range 20 {
+		h, err := srv.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now())
+		if err != nil || len(h) != 1 || h[0].EnvironmentName != "right" {
+			t.Fatalf("History() = %+v, %v", h, err)
+		}
+	}
+}
+
+func TestHistoryDecodeErrorNamesRequest(t *testing.T) {
+	t.Parallel()
+	srv := bcadmintest.NewServer(t)
+	srv.HandleJSON(http.MethodPost, "exports/history", http.StatusOK, map[string]any{"value": "x\u001b[31m"})
+	_, err := srv.NewClient(t).Exports().History(context.Background(), time.Now().Add(-time.Hour), time.Now())
+	if err == nil || !strings.HasPrefix(err.Error(), "bcadmin: POST exports/history: decoding response") || strings.ContainsRune(err.Error(), 0x1b) {
+		t.Errorf("error = %v", err)
 	}
 }
