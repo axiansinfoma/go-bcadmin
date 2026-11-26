@@ -16,6 +16,7 @@ Business Central Administration Center API. Read README.md for the user view.
 | `tenant.go`, `applications.go`, `environments.go`, ... | One file per API area with its types and service. |
 | `apps.go`, `pte.go`, `updates.go`, `settings.go`, `sessions.go` | Environment-scoped services (`Client.Apps`, `Client.Updates`, `Client.Settings`, `Client.Sessions` and the same methods on `Environment`); unbound environments give services whose methods return an error. |
 | `telemetry.go` | `EnvironmentsService.Telemetry` and `Environment.Telemetry`. |
+| `exports.go`, `notifications.go`, `support.go` | Tenant-level services (`Client.Exports`, `Client.Notifications`, `Client.Support`) with family/environment arguments where needed, and `Environment` shortcuts. |
 | `internal/multipartbody/` | Seekable multipart body that streams the .app file of a PTE upload. |
 | `environment.go` | The `Environment` object; its methods delegate to `EnvironmentsService`. |
 | `time.go` | `Time`, a tolerant timestamp type; use `*Time` for all timestamps in responses. |
@@ -131,6 +132,24 @@ make check    # tidy, lint, test, vuln
 - Telemetry query parameters are `startDateUtc`, `endDateUtc` and
   `logCategory` (the names in the documented route; the parameter table on
   the same page uses other names). Rows keep numbers as `json.Number`.
+- Database exports: the SAS URI is a secret; validation errors never include
+  it (nor `url.Parse` errors, which quote it), and `ExportOptions` masks it
+  when formatted (`Format` covers every verb, but fmt cannot reach it in
+  unexported fields of other structs). The start response is not documented: it is read as
+  `rawPayload` (send does not decode it) and an operation is returned if the
+  body is one; any other 2xx body, and a 2xx body that cannot be read
+  (`acceptedRaw` in send), gives nil, never an error that would invite a
+  second export from the monthly quota. `decodeList` also accepts a single
+  object (the documented history shape).
+  Export history is a POST with `start`/`end` query parameters, deprecated
+  from v2.30 (refused there); it accepts a bare array or `{"value": [...]}`
+  (`decodeList`, exact `value` key first, unwrapped once).
+- Creating a notification recipient is a PUT that creates; it is sent with
+  `withNonIdempotent` so it is not retried on 5xx. Outage report results
+  document `creationStatus` value `Error`; callers check it as well as the
+  error.
+- Reported outages use PascalCase keys; outage question `parentId` is
+  documented as a string but accepted as a number too.
 - `Session.LogOnDate` stays a string: the docs type it as a string, and a
   format `Time` cannot parse would fail the whole list.
 - A single app operation (`apps/{appId}/operations/{id}`) is documented as a

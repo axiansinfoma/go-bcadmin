@@ -1,0 +1,38 @@
+{
+  "value": [
+    {
+      "sequence": 1,
+      "parentId": null,
+      "id": "isProduction",
+      "defaultValue": false,
+      "questionType": "Toggle",
+      "questionText": "Is a production environment affected?",
+      "required": true,
+      "onText": "Yes",
+      "offText": "No",
+      "multiline": false
+    },
+    {
+      "sequence": 2,
+      "parentId": "isProduction",
+      "id": "details",
+      "defaultValue": "",
+      "questionType": "TextField",
+      "questionText": "Describe the impact.",
+      "required": false,
+      "onText": "",
+      "offText": "",
+      "multiline": true
+    },
+    {
+      "sequence": 3,
+      "parentId": 1,
+      "id": "since",
+      "defaultValue": null,
+      "questionType": "DateTime",
+      "questionText": "Since when?",
+      "required": false,
+      "multiline": false
+    }
+  ]
+}

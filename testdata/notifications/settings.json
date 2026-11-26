@@ -1,0 +1,6 @@
+{
+  "aadTenantId": "00000000-0000-0000-0000-000000000001",
+  "recipients": [
+    {"id": "00000000-0000-0000-0000-000000000701", "email": "admin@contoso.com", "name": "Contoso Admin"}
+  ]
+}
