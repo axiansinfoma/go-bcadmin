@@ -79,8 +79,8 @@ func (e *TelemetryExpectations) UnmarshalJSON(data []byte) error {
 	return err
 }
 
-// enumName decodes a JSON string, null or integer; an integer is replaced by
-// names[n] when it is in range.
+// enumName decodes a JSON string, null or number; an integer is replaced by
+// names[n] when it is in range, other numbers keep their text.
 func enumName(data []byte, names []string) (string, error) {
 	data = bytes.TrimSpace(data)
 	if bytes.Equal(data, []byte("null")) {
@@ -91,14 +91,15 @@ func enumName(data []byte, names []string) (string, error) {
 		err := json.Unmarshal(data, &s)
 		return s, err
 	}
-	n, err := strconv.Atoi(string(data))
-	if err != nil {
-		return "", errors.New("bcadmin: enum value is neither a string nor an integer")
+	if len(data) == 0 || (data[0] != '-' && (data[0] < '0' || data[0] > '9')) {
+		return "", errors.New("bcadmin: enum value is neither a string nor a number")
 	}
-	if n >= 0 && n < len(names) {
+	if n, err := strconv.Atoi(string(data)); err == nil && n >= 0 && n < len(names) {
 		return names[n], nil
 	}
-	return strconv.Itoa(n), nil
+	// Other numbers, also outside the int range or with a fraction, keep
+	// their text.
+	return string(data), nil
 }
 
 // TelemetryColumn describes one column of a telemetry result.

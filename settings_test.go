@@ -226,8 +226,11 @@ func TestTimeZones(t *testing.T) {
 		t.Errorf("TimeZones() = %+v, %v", zones, err)
 	}
 	old := bcadmintest.NewServer(t, bcadmintest.WithAPIVersion("v2.12"))
-	if _, err := old.NewClient(t).Applications().TimeZones(context.Background()); err == nil {
-		t.Error("TimeZones on v2.12: no error")
+	if _, err := old.NewClient(t).Applications().TimeZones(context.Background()); err == nil || !strings.Contains(err.Error(), "v2.13") {
+		t.Errorf("TimeZones on v2.12: %v", err)
+	}
+	if n := len(old.Requests()); n != 0 {
+		t.Errorf("TimeZones on v2.12 sent %d requests", n)
 	}
 }
 
