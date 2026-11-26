@@ -375,8 +375,8 @@ client := srv.NewClient(t)
 ```
 
 `srv.Requests()` keeps the first MiB of each request body (`BodyTruncated`
-tells when it was cut off), so tests that upload large .app files do not hold
-them in memory; `bcadmintest.WithMaxRecordedBody` changes the limit.
+tells when it was cut off), so tests that upload large .app files do not keep
+them in memory after the request; `bcadmintest.WithMaxRecordedBody` changes the limit.
 
 ## Integration tests
 
@@ -390,7 +390,8 @@ message; redact them before sharing the output.
 export BCADMIN_TENANT_ID=<tenant-id>     # required, otherwise the tests are skipped
 export BCADMIN_ENVIRONMENT=<environment> # optional, for the environment tests
 # credentials for azidentity.DefaultAzureCredential, for example an Azure CLI
-# login or AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID
+# login or AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID (set
+# AZURE_TENANT_ID to the same tenant as BCADMIN_TENANT_ID)
 make integration
 ```
 

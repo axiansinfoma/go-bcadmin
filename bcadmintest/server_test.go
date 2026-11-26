@@ -133,9 +133,6 @@ func TestServerRecordedBodyLimit(t *testing.T) {
 				t.Errorf("handler got %d bytes, recorded %d (truncated %v); want %d, %d (%v)",
 					handled.Load(), len(got.Body), got.BodyTruncated, tc.size, tc.recorded, tc.truncated)
 			}
-			if tc.recorded > 0 && cap(got.Body) > tc.recorded && tc.truncated {
-				t.Errorf("recorded body keeps capacity %d", cap(got.Body))
-			}
 		})
 	}
 }

@@ -128,7 +128,9 @@ func ExampleAppsService_Install() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	op, err := poller.Wait(ctx, nil)
+	waitCtx, cancel := context.WithTimeout(ctx, time.Hour)
+	defer cancel()
+	op, err := poller.Wait(waitCtx, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -154,7 +156,9 @@ func ExampleAppsService_InstallPTE() {
 		return
 	}
 	// Return as soon as the installation is scheduled for the update window.
-	op, err := poller.Wait(ctx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
+	waitCtx, cancel := context.WithTimeout(ctx, time.Hour)
+	defer cancel()
+	op, err := poller.Wait(waitCtx, &bcadmin.WaitOptions{TreatScheduledAsDone: true})
 	switch {
 	case errors.Is(err, bcadmin.ErrOperationScheduled):
 		fmt.Println("scheduled for the update window")
