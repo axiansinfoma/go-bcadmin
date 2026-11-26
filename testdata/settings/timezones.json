@@ -1,0 +1,18 @@
+{
+  "value": [
+    {
+      "id": "Romance Standard Time",
+      "displayName": "(UTC+01:00) Brussels, Copenhagen, Madrid, Paris",
+      "currentUtcOffset": "+01:00",
+      "supportsDaylightSavingTime": true,
+      "isCurrentlyDaylightSavingTime": false
+    },
+    {
+      "id": "Pacific Standard Time",
+      "displayName": "(UTC-08:00) Pacific Time (US & Canada)",
+      "currentUtcOffset": "-08:00",
+      "supportsDaylightSavingTime": true,
+      "isCurrentlyDaylightSavingTime": false
+    }
+  ]
+}

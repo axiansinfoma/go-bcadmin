@@ -159,6 +159,44 @@ if err := env.Updates().Select(ctx, "27.1", &bcadmin.ScheduleUpdateOptions{Selec
 }
 ```
 
+## Settings, sessions and telemetry
+
+```go
+// Update window in a Windows time zone (see client.Applications().TimeZones).
+_, err = env.Settings().SetUpdateWindow(ctx, bcadmin.SetUpdateWindowOptions{
+	Start: "22:00", End: "06:00", TimeZoneID: "W. Europe Standard Time",
+})
+if err != nil {
+	return err
+}
+
+// Restrict access to a Microsoft Entra security group.
+if err := env.Settings().SetSecurityGroup(ctx, groupObjectID); err != nil {
+	return err
+}
+
+// Active sessions.
+sessions, err := env.Sessions().List(ctx)
+if err != nil {
+	return err
+}
+for _, s := range sessions {
+	fmt.Println(s.SessionID, s.UserID, s.ClientType)
+}
+
+// Telemetry of the last hour.
+tel, err := env.Telemetry(ctx, bcadmin.TelemetryQuery{Start: time.Now().Add(-time.Hour), End: time.Now()})
+if err != nil {
+	return err
+}
+msg := tel.Column("message")
+for _, row := range tel.Rows {
+	if msg >= 0 {
+		fmt.Println(row[msg])
+	}
+}
+```
+
 ## Long-running operations
 
 Calls that start an operation return a `*bcadmin.Poller[T]`:
@@ -316,12 +354,19 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Updates | `GET .../environments/{name}/updates` | `Updates(...).List`, `Environment.Updates().List` | | ✅ |
 | Updates | `PATCH .../environments/{name}/updates/{version}` | `Updates(...).Select`, `Reschedule` | | ✅ |
 | Updates | `POST .../environments/{name}/operations/{id}/cancel` | `Updates(...).CancelRunning` |  | ✅ |
-| Settings | update window, time zones, Application Insights, security group, partner access, Microsoft 365 licenses, AppSource update cadence | | | 🚧 |
-| Sessions | list, get, terminate | | | 🚧 |
+| Settings | `GET/PUT .../settings/upgrade` | `Settings(...).UpdateWindow`, `SetUpdateWindow` (time zone form v2.13) | | ✅ |
+| Settings | `GET applications/settings/timezones` | `Applications().TimeZones` | v2.13 | ✅ |
+| Settings | `POST .../settings/appinsightskey` | `Settings(...).SetAppInsightsKey` | | ✅ |
+| Settings | `GET/POST/DELETE .../settings/securitygroupaccess` | `Settings(...).SecurityGroup`, `SetSecurityGroup`, `ClearSecurityGroup` | v2.8 | ✅ |
+| Settings | `GET/PUT .../settings/partneraccess` | `Settings(...).PartnerAccess`, `SetPartnerAccess` (internal global admins only) | v2.22 | ✅ |
+| Settings | `GET/POST .../settings/accesswithm365licenses` | `Settings(...).AccessWithM365Licenses`, `SetAccessWithM365Licenses` | v2.12 | ✅ |
+| Settings | `PUT .../settings/appSourceAppsUpdateCadence` | `Settings(...).SetAppSourceUpdateCadence` | | ✅ |
+| Sessions | `GET .../environments/{name}/sessions[/{id}]` | `Sessions(...).List`, `Get` | | ✅ |
+| Sessions | `DELETE .../environments/{name}/sessions/{id}` | `Sessions(...).Terminate` | | ✅ |
 | Database export | metrics, start, history | | | 🚧 |
 | Notifications | settings, recipients | | | 🚧 |
 | Support | contact, outage types and questions, reported outages, report outage | | | 🚧 |
-| Telemetry | query | | | 🚧 |
+| Telemetry | `GET .../environments/{name}/telemetry` | `Environments().Telemetry`, `Environment.Telemetry` | | ✅ |
 | Environment transfers | outgoing, incoming | | | 🚧 |
 | Authorized Entra apps | list, authorize, remove, manageable tenants | | | 🚧 |
 

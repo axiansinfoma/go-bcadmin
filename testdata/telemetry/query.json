@@ -1,0 +1,11 @@
+{
+  "queryColumns": [
+    {"name": "Timestamp", "ordinal": 0, "dataType": 2, "expectations": 0},
+    {"name": "Message", "ordinal": 1, "dataType": "String", "expectations": "Wide"},
+    {"name": "ExecutionTime", "ordinal": 2, "dataType": 1, "expectations": 0}
+  ],
+  "queryResults": [
+    ["2026-11-26T08:15:00Z", "Report rendered", 12345678901234567],
+    ["2026-11-26T08:16:00Z", null, 42]
+  ]
+}

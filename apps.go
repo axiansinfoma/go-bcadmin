@@ -305,10 +305,7 @@ func (s *AppsService) fetcher(appID, operationID string) func(context.Context) (
 // needVersion returns an error if the client's API version is older than
 // v2.minMinor, the version in which the endpoint called name was introduced.
 func (s *AppsService) needVersion(name string, minMinor int) error {
-	if !s.c.apiVersionAtLeast(2, minMinor) {
-		return fmt.Errorf("bcadmin: %s needs API version v2.%d or later, client uses %s", name, minMinor, s.c.apiVersion)
-	}
-	return nil
+	return s.c.needVersion(name, minMinor)
 }
 
 // startAppOperation sends a POST that starts the operation name (install,

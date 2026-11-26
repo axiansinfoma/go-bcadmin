@@ -392,3 +392,33 @@ func (freshBodyPolicy) Do(req *policy.Request) (*http.Response, error) {
 	}
 	return req.Next()
 }
+
+// needVersion returns an error if the client's API version is older than
+// v2.minMinor, the version in which the endpoint called name was introduced.
+func (c *Client) needVersion(name string, minMinor int) error {
+	if !c.apiVersionAtLeast(2, minMinor) {
+		return fmt.Errorf("bcadmin: %s needs API version v2.%d or later, client uses %s", name, minMinor, c.apiVersion)
+	}
+	return nil
+}
+
+// callQuery is call with a query string; empty query values are left out.
+func (c *Client) callQuery(ctx context.Context, method, template string, segments []string, query url.Values, body, out any) error {
+	p, err := path(template, segments...)
+	if err != nil {
+		return err
+	}
+	for k, v := range query {
+		if len(v) == 0 || (len(v) == 1 && v[0] == "") {
+			delete(query, k)
+		}
+	}
+	if q := query.Encode(); q != "" {
+		p += "?" + q
+	}
+	u, err := c.resolve(p)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, method, u, body, out)
+}

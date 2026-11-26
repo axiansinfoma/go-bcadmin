@@ -14,7 +14,8 @@ Business Central Administration Center API. Read README.md for the user view.
 | `errors.go` | `ResponseError` (API error body pass-through), sentinels, `OperationError`. |
 | `operation.go`, `poller.go` | `Operation`, statuses and types; generic `Poller[T]`. |
 | `tenant.go`, `applications.go`, `environments.go`, ... | One file per API area with its types and service. |
-| `apps.go`, `pte.go`, `updates.go` | Environment-scoped services (`Client.Apps`, `Client.Updates`, `Environment.Apps()`, `Environment.Updates()`); unbound environments give services whose methods return an error. |
+| `apps.go`, `pte.go`, `updates.go`, `settings.go`, `sessions.go` | Environment-scoped services (`Client.Apps`, `Client.Updates`, `Client.Settings`, `Client.Sessions` and the same methods on `Environment`); unbound environments give services whose methods return an error. |
+| `telemetry.go` | `EnvironmentsService.Telemetry` and `Environment.Telemetry`. |
 | `internal/multipartbody/` | Seekable multipart body that streams the .app file of a PTE upload. |
 | `environment.go` | The `Environment` object; its methods delegate to `EnvironmentsService`. |
 | `time.go` | `Time`, a tolerant timestamp type; use `*Time` for all timestamps in responses. |
@@ -116,10 +117,20 @@ make check    # tidy, lint, test, vuln
   (`minorTrackable*` constants in environments.go).
 - `Get environment` is documented as wrapped in `{"value": [...]}`, but the
   service returns the object; `EnvironmentsService.Get` accepts both.
-- App and PTE methods whose endpoint has a documented "INTRODUCED IN" version
-  later than v2.0 check it with `AppsService.needVersion` before sending, so an
-  old client gets a clear error instead of a 404 that looks like "not found".
-  Endpoints without a documented version are not checked.
+- Methods whose endpoint has a documented "INTRODUCED IN" version later than
+  v2.0 (apps, PTE, settings) check it with `Client.needVersion` before
+  sending, so an old client gets a clear error instead of a 404 that looks
+  like "not found". Endpoints without a documented version are not checked.
+- Settings bodies use the documented casing, which is inconsistent: the
+  security group body is `{"Value": ...}` (capital V), the AppSource cadence
+  body `{"value": ...}`. A missing security group is a 204 (or an empty
+  object); `SecurityGroup` returns nil. `UpdateWindow` returns nil for a
+  `null` body.
+- Telemetry query parameters are `startDateUtc`, `endDateUtc` and
+  `logCategory` (the names in the documented route; the parameter table on
+  the same page uses other names). Rows keep numbers as `json.Number`.
+- `Session.LogOnDate` stays a string: the docs type it as a string, and a
+  format `Time` cannot parse would fail the whole list.
 - A single app operation (`apps/{appId}/operations/{id}`) is documented as a
   plain object; `AppsService.GetOperation` also accepts the wrapped list form
   and checks the operation ID in both.

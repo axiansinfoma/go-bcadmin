@@ -1,0 +1,20 @@
+{
+  "value": [
+    {
+      "environmentName": "sb",
+      "applicationFamily": "BusinessCentral",
+      "sessionId": 1042,
+      "userId": "00000000-0000-0000-0000-000000000601",
+      "clientType": "WebClient",
+      "logOnDate": "2026-11-26T08:15:00Z",
+      "entryPointOperation": "OpenForm",
+      "entryPointObjectName": "Customer List",
+      "entryPointObjectId": "22",
+      "entryPointObjectType": "Page",
+      "currentObjectName": "Customer Card",
+      "currentObjectId": 21,
+      "currentObjectType": "Page",
+      "currentOperationDuration": 1500
+    }
+  ]
+}
