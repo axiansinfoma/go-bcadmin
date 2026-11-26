@@ -52,8 +52,10 @@ type ExportOptions struct {
 	//   - Validation errors built by this package never include it. Error
 	//     responses from the API are passed through unchanged and could echo
 	//     it; take care when logging them.
-	//   - ExportOptions masks it when formatted with fmt (with any verb), but
-	//     not when encoded as JSON (for example by a JSON logger).
+	//   - fmt masks it (with any verb) when it formats the value, a pointer
+	//     to it, or an exported field or element containing it. fmt cannot
+	//     mask it in an unexported field of another struct, and JSON
+	//     encoding (for example by a JSON logger) does not mask it.
 	//   - It is sent in the request body, so it appears in the logs when
 	//     ClientOptions.Logging.IncludeBody is set.
 	StorageAccountSASURI string `json:"storageAccountSasUri"`

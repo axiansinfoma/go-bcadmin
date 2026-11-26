@@ -134,7 +134,8 @@ make check    # tidy, lint, test, vuln
   the same page uses other names). Rows keep numbers as `json.Number`.
 - Database exports: the SAS URI is a secret; validation errors never include
   it (nor `url.Parse` errors, which quote it), and `ExportOptions` masks it
-  when formatted (`Format` covers every verb). The start response is not documented: it is read as
+  when formatted (`Format` covers every verb, but fmt cannot reach it in
+  unexported fields of other structs). The start response is not documented: it is read as
   `rawPayload` (send does not decode it) and an operation is returned if the
   body is one; any other 2xx body, and a 2xx body that cannot be read
   (`acceptedRaw` in send), gives nil, never an error that would invite a
