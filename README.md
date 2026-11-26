@@ -42,7 +42,10 @@ For service-to-service authentication, the Microsoft Entra app needs:
 
 A few endpoints (Power Platform link/unlink, partner access, listing and
 authorizing Entra apps, environment transfers) do not accept app-only tokens;
-they need a delegated (user) token. Their documentation says so.
+they need a user token, and environment transfers an internal administrator
+of the tenant (not a delegated administrator). Listing the tenants an app may
+manage works only with an app-only token. The method documentation says
+which applies.
 
 ## Quick start
 
@@ -229,6 +232,37 @@ if res.CreationStatus.Is(bcadmin.OutageReportError) {
 }
 ```
 
+## Environment transfers and authorized apps
+
+```go
+// Move an environment to another Microsoft Entra tenant: request it on the
+// source tenant, accept it on the destination tenant (internal
+// administrators only).
+src, err := client.ForTenant(sourceTenantID)
+if err != nil {
+	return err
+}
+if _, err := src.Transfers().RequestOutgoing(ctx, bcadmin.FamilyBusinessCentral, "uat",
+	bcadmin.OutgoingTransferOptions{DestinationEntraTenantID: destTenantID, RunAt: time.Now().Add(24 * time.Hour)}); err != nil {
+	return err
+}
+dst, err := client.ForTenant(destTenantID)
+if err != nil {
+	return err
+}
+if _, err := dst.Transfers().AcceptIncoming(ctx, bcadmin.IncomingTransfer{
+	SourceEntraTenantID: sourceTenantID, ApplicationFamily: bcadmin.FamilyBusinessCentral,
+	SourceEnvironmentName: "uat", DestinationEnvironmentName: "uat",
+}); err != nil {
+	return err
+}
+
+// Authorize an Entra app for the Admin Center API (user token).
+if _, err := client.AuthorizedApps().Authorize(ctx, appClientID); err != nil {
+	return err
+}
+```
+
 ## Long-running operations
 
 Calls that start an operation return a `*bcadmin.Poller[T]`:
@@ -405,8 +439,11 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Support | `GET support/reportedoutages` | `Support().ReportedOutages` | | ✅ |
 | Support | `POST support/.../environments/{name}/reportoutage` | `Support().ReportOutage`, `Environment.ReportOutage` | | ✅ |
 | Telemetry | `GET .../environments/{name}/telemetry` | `Environments().Telemetry`, `Environment.Telemetry` | | ✅ |
-| Environment transfers | outgoing, incoming | | | 🚧 |
-| Authorized Entra apps | list, authorize, remove, manageable tenants | | | 🚧 |
+| Environment transfers | `POST/DELETE transfers/outgoing/applications/{family}/environments/{name}` | `Transfers().RequestOutgoing`, `CancelOutgoing`, `Environment.RequestTransfer`, `CancelTransfer` | v2.20 | ✅ |
+| Environment transfers | `GET transfers/outgoing` | `Transfers().Outgoing` | v2.20 | ✅ |
+| Environment transfers | `POST transfers/incoming`, `GET transfers/incoming/{sourceTenantId}` | `Transfers().AcceptIncoming`, `Incoming` | v2.20 | ✅ |
+| Authorized Entra apps | `GET authorizedAadApps`, `PUT/DELETE authorizedAadApps/{appClientId}` | `AuthorizedApps().List`, `Authorize`, `Remove` (user token only) | | ✅ |
+| Authorized Entra apps | `GET authorizedAadApps/manageableTenants` | `AuthorizedApps().ManageableTenants` (app-only token) | v2.24 | ✅ |
 
 ## Versioning
 
