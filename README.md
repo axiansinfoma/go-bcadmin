@@ -442,7 +442,7 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Environment transfers | `POST/DELETE transfers/outgoing/applications/{family}/environments/{name}` | `Transfers().RequestOutgoing`, `CancelOutgoing`, `Environment.RequestTransfer`, `CancelTransfer` | v2.20 | ✅ |
 | Environment transfers | `GET transfers/outgoing` | `Transfers().Outgoing` | v2.20 | ✅ |
 | Environment transfers | `POST transfers/incoming`, `GET transfers/incoming/{sourceTenantId}` | `Transfers().AcceptIncoming`, `Incoming` | v2.20 | ✅ |
-| Authorized Entra apps | `GET authorizedAadApps`, `PUT/DELETE authorizedAadApps/{appClientId}` | `AuthorizedApps().List`, `Authorize`, `Remove` (user token only) | | ✅ |
+| Authorized Entra apps | `GET authorizedAadApps`, `PUT/DELETE authorizedAadApps/{appClientId}` | `AuthorizedApps().List`, `Authorize` (user token only), `Remove` | | ✅ |
 | Authorized Entra apps | `GET authorizedAadApps/manageableTenants` | `AuthorizedApps().ManageableTenants` (app-only token) | v2.24 | ✅ |
 
 ## Versioning

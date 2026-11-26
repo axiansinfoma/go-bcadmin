@@ -33,7 +33,7 @@ func TestTransfers(t *testing.T) {
 	tr := srv.NewClient(t).Transfers()
 	ctx := context.Background()
 
-	runAt := time.Date(2026, 12, 1, 3, 0, 0, 0, time.FixedZone("CET", 3600))
+	runAt := time.Date(2026, 12, 1, 3, 0, 0, 123456789, time.FixedZone("CET", 3600))
 	op, err := tr.RequestOutgoing(ctx, bc, "sb", bcadmin.OutgoingTransferOptions{DestinationEntraTenantID: destTenant, RunAt: runAt})
 	if err != nil || op.ID != "00000000-0000-0000-0000-000000000a01" || !op.Type.Is(bcadmin.OperationTypeRequestTransfer) || !op.Status.Is(bcadmin.OperationStatusQueued) {
 		t.Fatalf("RequestOutgoing() = %+v, %v", op, err)
@@ -92,6 +92,7 @@ func TestTransfersValidation(t *testing.T) {
 		},
 		"empty source tenant": func() error { _, err := tr.Incoming(ctx, ""); return err },
 		"source tenant path":  func() error { _, err := tr.Incoming(ctx, "../outgoing"); return err },
+		"blank source tenant": func() error { _, err := tr.Incoming(ctx, " "); return err },
 	} {
 		if call() == nil {
 			t.Errorf("%s: no error", name)
@@ -171,5 +172,43 @@ func TestCancelTransferEmptyResponse(t *testing.T) {
 	var unbound bcadmin.Environment
 	if _, err := unbound.CancelTransfer(ctx); err == nil {
 		t.Error("CancelTransfer of an unbound environment: no error")
+	}
+}
+
+// TestTransferAcceptedWithoutOperation checks that an accepted transfer
+// request is not reported as an error when its 2xx body is not a readable
+// operation.
+func TestTransferAcceptedWithoutOperation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for name, write := range map[string]func(http.ResponseWriter){
+		"empty":     func(w http.ResponseWriter) { w.WriteHeader(http.StatusAccepted) },
+		"not json":  func(w http.ResponseWriter) { _, _ = w.Write([]byte("Accepted")) },
+		"too large": func(w http.ResponseWriter) { _, _ = w.Write([]byte(strings.Repeat("x", 4096))) },
+	} {
+		srv := bcadmintest.NewServer(t)
+		for _, p := range []string{"transfers/outgoing/applications/{family}/environments/{env}", "transfers/incoming"} {
+			srv.Handle(http.MethodPost, p, func(w http.ResponseWriter, _ *http.Request) { write(w) })
+		}
+		srv.Handle(http.MethodDelete, "transfers/outgoing/applications/{family}/environments/{env}", func(w http.ResponseWriter, _ *http.Request) { write(w) })
+		o := srv.ClientOptions()
+		o.MaxResponseBytes = 1024
+		c, err := bcadmin.NewClient(bcadmintest.Credential(), o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr := c.Transfers()
+		if op, err := tr.RequestOutgoing(ctx, bc, "sb", bcadmin.OutgoingTransferOptions{DestinationEntraTenantID: destTenant, RunAt: time.Now()}); err != nil || op != nil {
+			t.Errorf("%s: RequestOutgoing() = %+v, %v", name, op, err)
+		}
+		if op, err := tr.AcceptIncoming(ctx, bcadmin.IncomingTransfer{SourceEntraTenantID: sourceTenant, ApplicationFamily: bc, SourceEnvironmentName: "a", DestinationEnvironmentName: "b"}); err != nil || op != nil {
+			t.Errorf("%s: AcceptIncoming() = %+v, %v", name, op, err)
+		}
+		if op, err := tr.CancelOutgoing(ctx, bc, "sb"); err != nil || op != nil {
+			t.Errorf("%s: CancelOutgoing() = %+v, %v", name, op, err)
+		}
+		if n := len(srv.Requests()); n != 3 {
+			t.Errorf("%s: sent %d requests, want 3", name, n)
+		}
 	}
 }

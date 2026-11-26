@@ -36,13 +36,14 @@ type OutgoingTransferOptions struct {
 	// destination tenant. Required.
 	DestinationEntraTenantID string
 	// RunAt is when the transfer runs if it is accepted on the destination
-	// tenant. Required; it is sent as UTC.
+	// tenant. Required; it is sent as UTC, truncated to whole seconds.
 	RunAt time.Time
 }
 
 // RequestOutgoing requests the transfer of the environment
 // family/environment to another Microsoft Entra tenant and returns the
-// operation of the request (type RequestTransferToAnotherEntraTenant). The
+// operation of the request (type RequestTransferToAnotherEntraTenant), or
+// nil if a successful response has no readable operation. The
 // call must be authenticated on the source tenant. The destination tenant
 // must accept the transfer (see [TransfersService.AcceptIncoming]) before
 // the operation's expiresOn parameter. The request is not retried on
@@ -63,18 +64,14 @@ func (s *TransfersService) RequestOutgoing(ctx context.Context, family, environm
 	body := struct {
 		DestinationEntraTenantID string    `json:"DestinationEntraTenantId"`
 		RunAt                    time.Time `json:"RunAt"`
-	}{opts.DestinationEntraTenantID, opts.RunAt.UTC()}
-	var op Operation
-	if err := s.c.call(ctx, http.MethodPost, "transfers/outgoing/applications/{}/environments/{}",
-		[]string{family, environment}, body, &op); err != nil {
-		return nil, err
-	}
-	return &op, nil
+	}{opts.DestinationEntraTenantID, opts.RunAt.UTC().Truncate(time.Second)}
+	return s.acceptedOperation(ctx, http.MethodPost, "transfers/outgoing/applications/{}/environments/{}",
+		[]string{family, environment}, body)
 }
 
 // CancelOutgoing cancels the pending transfer of the environment
-// family/environment and returns the canceled operation, or nil if the
-// response has none. The call must be authenticated on the source tenant.
+// family/environment and returns the canceled operation, or nil if a
+// successful response has no readable operation. The call must be authenticated on the source tenant.
 // Available since API v2.20.
 //
 // DELETE /transfers/outgoing/applications/{applicationFamily}/environments/{environmentName}.
@@ -82,15 +79,19 @@ func (s *TransfersService) CancelOutgoing(ctx context.Context, family, environme
 	if err := s.c.needVersion("environment transfers", minorTransfers); err != nil {
 		return nil, err
 	}
-	var op Operation
-	if err := s.c.call(ctx, http.MethodDelete, "transfers/outgoing/applications/{}/environments/{}",
-		[]string{family, environment}, nil, &op); err != nil {
+	return s.acceptedOperation(ctx, http.MethodDelete, "transfers/outgoing/applications/{}/environments/{}",
+		[]string{family, environment}, nil)
+}
+
+// acceptedOperation returns the operation in a 2xx response body, or nil
+// when the body is empty, cannot be read or is not an operation. The
+// request was accepted either way; an error would invite sending it again.
+func (s *TransfersService) acceptedOperation(ctx context.Context, method, template string, segments []string, body any) (*Operation, error) {
+	var raw rawPayload
+	if err := s.c.call(ctx, method, template, segments, body, &raw); err != nil {
 		return nil, err
 	}
-	if op.ID == "" {
-		return nil, nil
-	}
-	return &op, nil
+	return operationIn(raw), nil
 }
 
 // Outgoing returns the transfer requests of the tenant that have not been
@@ -112,6 +113,9 @@ func (s *TransfersService) Outgoing(ctx context.Context) ([]Operation, error) {
 //
 // GET /transfers/incoming/{sourceEntraTenantId}.
 func (s *TransfersService) Incoming(ctx context.Context, sourceEntraTenantID string) ([]Operation, error) {
+	if blank(sourceEntraTenantID) {
+		return nil, errors.New("bcadmin: source Microsoft Entra tenant ID is required")
+	}
 	if err := s.c.needVersion("environment transfers", minorTransfers); err != nil {
 		return nil, err
 	}
@@ -136,7 +140,8 @@ type IncomingTransfer struct {
 
 // AcceptIncoming accepts a transfer requested by another tenant and returns
 // the operation of the transfer (type MoveToAnotherAadTenant), which runs
-// at the time set in the request. The call must be authenticated on the
+// at the time set in the request, or nil if a successful response has no
+// readable operation. The call must be authenticated on the
 // destination tenant. The request is not retried on server errors (unless
 // ClientOptions.RetryNonIdempotent is set). Available since API v2.20.
 //
@@ -149,11 +154,7 @@ func (s *TransfersService) AcceptIncoming(ctx context.Context, transfer Incoming
 	if err := s.c.needVersion("environment transfers", minorTransfers); err != nil {
 		return nil, err
 	}
-	var op Operation
-	if err := s.c.call(ctx, http.MethodPost, "transfers/incoming", nil, transfer, &op); err != nil {
-		return nil, err
-	}
-	return &op, nil
+	return s.acceptedOperation(ctx, http.MethodPost, "transfers/incoming", nil, transfer)
 }
 
 // RequestTransfer requests the transfer of the environment to another

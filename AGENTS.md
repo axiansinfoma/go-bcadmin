@@ -152,8 +152,10 @@ make check    # tidy, lint, test, vuln
 - Environment transfers (v2.20+, internal administrators only) have
   PascalCase request bodies (`DestinationEntraTenantId`, `RunAt`,
   `SourceEntraTenantId`, ...) and return operations; tracking them is not
-  documented, so they return `*Operation`, not a `Poller`. Request and
-  accept are POSTs (not retried on 5xx). `RunAt` is sent as UTC.
+  documented, so they return `*Operation`, not a `Poller`; like export
+  start they read the body as `rawPayload` and return nil instead of an
+  error when a 2xx body is not a readable operation. Request and
+  accept are POSTs (not retried on 5xx). `RunAt` is sent as UTC, truncated to whole seconds.
 - `GET authorizedAadApps` returns a bare array (`listAll` handles it);
   `manageableTenants` is a wrapped list. App client IDs equal to
   `manageableTenants` are refused so PUT/DELETE cannot address that path.
