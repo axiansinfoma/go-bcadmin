@@ -43,7 +43,7 @@ func TestAuthorizedApps(t *testing.T) {
 	}
 
 	n := len(srv.Requests())
-	for _, id := range []string{"", " ", "00000000-0000-0000-0000-000000000000", "manageableTenants", "ManageableTenants", "a/b", ".."} {
+	for _, id := range []string{"", " ", "00000000-0000-0000-0000-000000000000", "manageableTenants", "ManageableTenants", " manageableTenants", appClientID + " ", "a/b", ".."} {
 		if _, err := apps.Authorize(ctx, id); err == nil {
 			t.Errorf("Authorize(%q): no error", id)
 		}

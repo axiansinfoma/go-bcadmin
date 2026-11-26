@@ -18,8 +18,9 @@ const minorTransfers = 20
 // these endpoints: calls authenticated as a delegated administrator or as a
 // Microsoft Entra app are not possible. A transfer is requested on the
 // source tenant ([TransfersService.RequestOutgoing]) and accepted on the
-// destination tenant ([TransfersService.AcceptIncoming]), with a client
-// for each tenant (see [Client.ForTenant]).
+// destination tenant ([TransfersService.AcceptIncoming]), each with a
+// client authenticated as an internal administrator of that tenant
+// (usually a separate [NewClient] with that user's credential).
 //
 // The endpoints return operations; the documentation does not describe how
 // to track them after they were created.
@@ -72,7 +73,10 @@ func (s *TransfersService) RequestOutgoing(ctx context.Context, family, environm
 // CancelOutgoing cancels the pending transfer of the environment
 // family/environment and returns the canceled operation, or nil if a
 // successful response has no readable operation. The call must be
-// authenticated on the source tenant. Available since API v2.20.
+// authenticated on the source tenant. A DELETE is retried on server errors,
+// so a retry after a cancel that took effect can fail although the transfer
+// was canceled; check [TransfersService.Outgoing] after an error. Available
+// since API v2.20.
 //
 // DELETE /transfers/outgoing/applications/{applicationFamily}/environments/{environmentName}.
 func (s *TransfersService) CancelOutgoing(ctx context.Context, family, environment string) (*Operation, error) {

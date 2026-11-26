@@ -44,7 +44,7 @@ func TestTransfers(t *testing.T) {
 	findRequest(t, srv, http.MethodPost, "/admin/v2.29/transfers/outgoing/applications/BusinessCentral/environments/sb")
 
 	op, err = tr.CancelOutgoing(ctx, bc, "sb")
-	if err != nil || op == nil || !op.Status.Is(bcadmin.OperationStatusCanceled) || op.CompletedOn == nil {
+	if err != nil || op == nil || op.ID != "00000000-0000-0000-0000-000000000a01" || !op.Status.Is(bcadmin.OperationStatusCanceled) || op.CompletedOn == nil {
 		t.Errorf("CancelOutgoing() = %+v, %v", op, err)
 	}
 	findRequest(t, srv, http.MethodDelete, "/admin/v2.29/transfers/outgoing/applications/BusinessCentral/environments/sb")

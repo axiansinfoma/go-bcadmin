@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// minorManageableTenants is the API version (v2.24) that introduced
+// AuthorizedAppsService.ManageableTenants.
+const minorManageableTenants = 24
+
 // AuthorizedAppsService manages the Microsoft Entra apps authorized to call
 // the Admin Center API for the tenant. Use it through
 // [Client.AuthorizedApps].
@@ -76,24 +80,27 @@ func (s *AuthorizedAppsService) Remove(ctx context.Context, appClientID string) 
 // ManageableTenants returns the tenants in which the calling app is
 // authorized in the Business Central administration center; it does not
 // tell whether admin consent is granted there. The documentation states
-// that the endpoint can only be used when authenticated as an app.
+// that the endpoint can only be used when authenticated as an app, in a
+// tenant where the app is authorized and has admin consent for the
+// AdminCenter.ReadWrite.All permission.
 // Available since API v2.24.
 //
 // GET /authorizedAadApps/manageableTenants.
 func (s *AuthorizedAppsService) ManageableTenants(ctx context.Context) ([]ManageableTenant, error) {
-	if err := s.c.needVersion("manageableTenants", 24); err != nil {
+	if err := s.c.needVersion("manageableTenants", minorManageableTenants); err != nil {
 		return nil, err
 	}
 	return listAll[ManageableTenant](ctx, s.c, "authorizedAadApps/manageableTenants")
 }
 
-// checkAppClientID refuses an empty or all-zero application ID, and
-// "manageableTenants", which would address another endpoint.
+// checkAppClientID refuses an empty or all-zero application ID, one with
+// surrounding white space, and "manageableTenants", which would address
+// another endpoint.
 func checkAppClientID(id string) error {
 	switch {
 	case blank(id), id == "00000000-0000-0000-0000-000000000000":
 		return errors.New("bcadmin: app client ID is required")
-	case strings.EqualFold(strings.TrimSpace(id), "manageableTenants"):
+	case strings.TrimSpace(id) != id, strings.EqualFold(id, "manageableTenants"):
 		return errors.New("bcadmin: invalid app client ID")
 	}
 	return nil
