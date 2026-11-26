@@ -56,6 +56,9 @@ func TestSessions(t *testing.T) {
 	if err := s.Terminate(ctx, -1); err == nil {
 		t.Error("negative session ID: no error")
 	}
+	if _, err := s.Get(ctx, -1); err == nil {
+		t.Error("Get with a negative session ID: no error")
+	}
 }
 
 func TestTelemetry(t *testing.T) {
@@ -78,7 +81,7 @@ func TestTelemetry(t *testing.T) {
 		t.Errorf("query = %q", req.Query)
 	}
 	if len(tel.Columns) != 3 || !tel.Columns[0].DataType.Is(bcadmin.TelemetryDateTime) || !tel.Columns[1].DataType.Is(bcadmin.TelemetryString) ||
-		tel.Columns[1].Expectations != bcadmin.TelemetryExpectationsWide || tel.Columns[2].DataType != bcadmin.TelemetryNumeric {
+		!tel.Columns[1].Expectations.Is(bcadmin.TelemetryExpectationsWide) || tel.Columns[2].DataType != bcadmin.TelemetryNumeric {
 		t.Errorf("columns = %+v", tel.Columns)
 	}
 	i := tel.Column("executiontime")
@@ -97,5 +100,23 @@ func TestTelemetry(t *testing.T) {
 	}
 	if _, err := c.Environments().Telemetry(ctx, bc, "sb", bcadmin.TelemetryQuery{Start: time.Now(), End: time.Now().Add(-time.Hour)}); err == nil {
 		t.Error("end before start: no error")
+	}
+}
+
+// TestTelemetryColumnOutOfRange checks that Column never returns an index a
+// server sent outside the column list.
+func TestTelemetryColumnOutOfRange(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"queryColumns":[{"name":"message","ordinal":7}],"queryResults":[["x"]]}`,
+		`{"queryColumns":[{"name":"message","ordinal":-3}],"queryResults":[["x"]]}`,
+	} {
+		var tel bcadmin.Telemetry
+		if err := json.Unmarshal([]byte(body), &tel); err != nil {
+			t.Fatal(err)
+		}
+		if i := tel.Column("message"); i != -1 {
+			t.Errorf("Column() = %d for %s, want -1", i, body)
+		}
 	}
 }

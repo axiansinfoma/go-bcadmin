@@ -408,12 +408,13 @@ func (c *Client) callQuery(ctx context.Context, method, template string, segment
 	if err != nil {
 		return err
 	}
+	q := url.Values{}
 	for k, v := range query {
-		if len(v) == 0 || (len(v) == 1 && v[0] == "") {
-			delete(query, k)
+		if len(v) > 1 || (len(v) == 1 && v[0] != "") {
+			q[k] = v
 		}
 	}
-	if q := query.Encode(); q != "" {
+	if q := q.Encode(); q != "" {
 		p += "?" + q
 	}
 	u, err := c.resolve(p)

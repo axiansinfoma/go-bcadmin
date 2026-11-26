@@ -1,7 +1,7 @@
 {
   "queryColumns": [
     {"name": "Timestamp", "ordinal": 0, "dataType": 2, "expectations": 0},
-    {"name": "Message", "ordinal": 1, "dataType": "String", "expectations": "Wide"},
+    {"name": "Message", "ordinal": 1, "dataType": "String", "expectations": "wide"},
     {"name": "ExecutionTime", "ordinal": 2, "dataType": 1, "expectations": 0}
   ],
   "queryResults": [

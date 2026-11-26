@@ -57,7 +57,13 @@ func (t *TelemetryDataType) UnmarshalJSON(data []byte) error {
 
 // TelemetryExpectations are flags of a telemetry column. The service sends
 // them as a name or a number; numbers are decoded to the names below.
+// Compare with [TelemetryExpectations.Is].
 type TelemetryExpectations string
+
+// Is reports whether e and other are the same flags, ignoring case.
+func (e TelemetryExpectations) Is(other TelemetryExpectations) bool {
+	return strings.EqualFold(string(e), string(other))
+}
 
 // Telemetry column expectations.
 const (
@@ -126,10 +132,14 @@ func (t *Telemetry) UnmarshalJSON(data []byte) error {
 }
 
 // Column returns the index of the column named name in each row, ignoring
-// case, or -1.
+// case, or -1 if there is no such column or the server sent an index
+// outside the column list. Rows may still be shorter; check len(row).
 func (t *Telemetry) Column(name string) int {
 	for _, c := range t.Columns {
 		if strings.EqualFold(c.Name, name) {
+			if c.Ordinal < 0 || c.Ordinal >= len(t.Columns) {
+				return -1
+			}
 			return c.Ordinal
 		}
 	}

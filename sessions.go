@@ -74,6 +74,9 @@ func (s *SessionsService) Get(ctx context.Context, sessionID int) (*Session, err
 	if s.err != nil {
 		return nil, s.err
 	}
+	if sessionID < 0 {
+		return nil, errors.New("bcadmin: session ID must not be negative")
+	}
 	var out Session
 	if err := s.c.call(ctx, http.MethodGet, "applications/{}/environments/{}/sessions/{}",
 		[]string{s.family, s.env, strconv.Itoa(sessionID)}, nil, &out); err != nil {
@@ -83,7 +86,8 @@ func (s *SessionsService) Get(ctx context.Context, sessionID int) (*Session, err
 }
 
 // Terminate stops and deletes an active session. Users of the session lose
-// unsaved work.
+// unsaved work. Like other DELETE requests it is retried on server errors,
+// so a retry after a terminated session can return [ErrNotFound].
 //
 // DELETE /applications/{applicationFamily}/environments/{environmentName}/sessions/{sessionId}.
 func (s *SessionsService) Terminate(ctx context.Context, sessionID int) error {

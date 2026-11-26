@@ -82,7 +82,7 @@ func (s *AppsService) InstallPTE(ctx context.Context, file io.ReadSeeker, opts I
 	if s.err != nil {
 		return nil, s.err
 	}
-	if err := s.needVersion("pteInstall", 29); err != nil {
+	if err := s.c.needVersion("pteInstall", 29); err != nil {
 		return nil, err
 	}
 	if file == nil {
@@ -149,7 +149,7 @@ func (s *AppsService) ScheduledPTEOperations(ctx context.Context) ([]Operation, 
 	if s.err != nil {
 		return nil, s.err
 	}
-	if err := s.needVersion("scheduledPteOperations", 29); err != nil {
+	if err := s.c.needVersion("scheduledPteOperations", 29); err != nil {
 		return nil, err
 	}
 	return listAll[Operation](ctx, s.c, "applications/{}/environments/{}/apps/scheduledPteOperations", s.family, s.env)
@@ -164,7 +164,7 @@ func (s *AppsService) RemoveScheduledPTEVersion(ctx context.Context, appID strin
 	if s.err != nil {
 		return nil, s.err
 	}
-	if err := s.needVersion("removeScheduledPteVersion", 29); err != nil {
+	if err := s.c.needVersion("removeScheduledPteVersion", 29); err != nil {
 		return nil, err
 	}
 	if opts.TargetVersion == "" || opts.ScheduleKind == "" {

@@ -238,7 +238,7 @@ func (s *AppsService) UninstallRequirements(ctx context.Context, appID string) (
 	if s.err != nil {
 		return nil, s.err
 	}
-	if err := s.needVersion("uninstallRequirements", 25); err != nil {
+	if err := s.c.needVersion("uninstallRequirements", 25); err != nil {
 		return nil, err
 	}
 	return listAll[UninstallRequirement](ctx, s.c, "applications/{}/environments/{}/apps/{}/uninstallRequirements", s.family, s.env, appID)
@@ -302,18 +302,12 @@ func (s *AppsService) fetcher(appID, operationID string) func(context.Context) (
 	return func(ctx context.Context) (*Operation, error) { return s.GetOperation(ctx, appID, operationID) }
 }
 
-// needVersion returns an error if the client's API version is older than
-// v2.minMinor, the version in which the endpoint called name was introduced.
-func (s *AppsService) needVersion(name string, minMinor int) error {
-	return s.c.needVersion(name, minMinor)
-}
-
 // startAppOperation sends a POST that starts the operation name (install,
 // update, uninstall) on appID and returns a poller for it. minMinor is the
 // documented minimum minor API version of the endpoint (v2.minMinor); 0
 // means none is documented.
 func (s *AppsService) startAppOperation(ctx context.Context, name string, minMinor int, appID, template string, body any) (*Poller[*Operation], error) {
-	if err := s.needVersion("app "+name, minMinor); err != nil {
+	if err := s.c.needVersion("app "+name, minMinor); err != nil {
 		return nil, err
 	}
 	var op Operation

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -312,5 +313,25 @@ func TestSameOriginRedirectLimit(t *testing.T) {
 	}
 	if err := sameOriginRedirect(req, via); err == nil {
 		t.Error("11th redirect was allowed")
+	}
+}
+
+func TestCallQueryKeepsCallerValues(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "a=1" {
+			http.Error(w, "query "+r.URL.RawQuery, http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t, srv, nil)
+	q := url.Values{"a": {"1"}, "empty": {""}}
+	if err := c.callQuery(context.Background(), http.MethodGet, "x", nil, q, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := q["empty"]; !ok {
+		t.Error("callQuery changed the caller's values")
 	}
 }

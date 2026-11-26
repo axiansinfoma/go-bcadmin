@@ -191,7 +191,7 @@ if err != nil {
 }
 msg := tel.Column("message")
 for _, row := range tel.Rows {
-	if msg >= 0 {
+	if msg >= 0 && msg < len(row) {
 		fmt.Println(row[msg])
 	}
 }
