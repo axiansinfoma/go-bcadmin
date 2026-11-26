@@ -13,7 +13,8 @@ care of URLs, authentication, retries, pagination and waiting for long-running
 operations, and it passes the API's error messages through to you.
 
 > **Status:** pre-1.0. The API of this module can still change between minor
-> versions. See [Endpoint coverage](#endpoint-coverage) for what is implemented.
+> versions. All documented endpoints of API v2.29 are implemented; see
+> [Endpoint coverage](#endpoint-coverage).
 
 ## Install
 
@@ -373,9 +374,33 @@ client := srv.NewClient(t)
 // ... exercise your code, then inspect srv.Requests().
 ```
 
+`srv.Requests()` keeps the first MiB of each request body (`BodyTruncated`
+tells when it was cut off), so tests that upload large .app files do not keep
+them in memory after the request; `bcadmintest.WithMaxRecordedBody` changes the limit.
+
+## Integration tests
+
+The `integration` directory holds read-only tests against the live API. They
+are excluded by a build tag and never run in CI. They read quotas, environments,
+apps, updates, settings and similar data, and log only counts. Error messages of
+failed calls can contain the environment name, tenant details and the API's
+message; redact them before sharing the output.
+
+```sh
+export BCADMIN_TENANT_ID=<tenant-id>     # required, otherwise the tests are skipped
+export BCADMIN_ENVIRONMENT=<environment> # optional, for the environment tests
+# credentials for azidentity.DefaultAzureCredential, for example an Azure CLI
+# login or AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID (set
+# AZURE_TENANT_ID to the same tenant as BCADMIN_TENANT_ID)
+make integration
+```
+
 ## Endpoint coverage
 
-API version **v2.29**. ✅ implemented, 🚧 planned.
+API version **v2.29**. All documented endpoints are implemented (✅). The
+legacy environment upgrade endpoints, which the update endpoints replaced and
+Microsoft no longer documents, are not (the `settings/upgrade` update window
+endpoints are).
 
 | Area | Endpoints | Methods | Since | Status |
 | --- | --- | --- | --- | --- |
@@ -435,7 +460,7 @@ API version **v2.29**. ✅ implemented, 🚧 planned.
 | Environment transfers | `POST/DELETE transfers/outgoing/applications/{family}/environments/{name}` | `Transfers().RequestOutgoing`, `CancelOutgoing`, `Environment.RequestTransfer`, `CancelTransfer` | v2.20 | ✅ |
 | Environment transfers | `GET transfers/outgoing` | `Transfers().Outgoing` | v2.20 | ✅ |
 | Environment transfers | `POST transfers/incoming`, `GET transfers/incoming/{sourceTenantId}` | `Transfers().AcceptIncoming`, `Incoming` | v2.20 | ✅ |
-| Authorized Entra apps | `GET authorizedAadApps`, `PUT/DELETE authorizedAadApps/{appClientId}` | `AuthorizedApps().List`, `Authorize` (user token only), `Remove` | | ✅ |
+| Authorized Entra apps | `GET authorizedAadApps`, `PUT/DELETE authorizedAadApps/{appClientId}` | `AuthorizedApps().List` and `Authorize` (both user token only), `Remove` | | ✅ |
 | Authorized Entra apps | `GET authorizedAadApps/manageableTenants` | `AuthorizedApps().ManageableTenants` (app-only token) | v2.24 | ✅ |
 
 ## Versioning

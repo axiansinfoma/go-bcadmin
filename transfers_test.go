@@ -47,7 +47,9 @@ func TestTransfers(t *testing.T) {
 	if err != nil || op == nil || op.ID != "00000000-0000-0000-0000-000000000a01" || !op.Status.Is(bcadmin.OperationStatusCanceled) || op.CompletedOn == nil {
 		t.Errorf("CancelOutgoing() = %+v, %v", op, err)
 	}
-	findRequest(t, srv, http.MethodDelete, "/admin/v2.29/transfers/outgoing/applications/BusinessCentral/environments/sb")
+	if r := findRequest(t, srv, http.MethodDelete, "/admin/v2.29/transfers/outgoing/applications/BusinessCentral/environments/sb"); len(r.Body) != 0 {
+		t.Errorf("cancel body = %q, want none", r.Body)
+	}
 
 	out, err := tr.Outgoing(ctx)
 	if err != nil || len(out) != 1 || out[0].EnvironmentName != "sb" || out[0].Parameters["destinationEntraTenantId"] != destTenant ||
@@ -55,7 +57,8 @@ func TestTransfers(t *testing.T) {
 		t.Errorf("Outgoing() = %+v, %v", out, err)
 	}
 	in, err := tr.Incoming(ctx, sourceTenant)
-	if err != nil || len(in) != 1 {
+	if err != nil || len(in) != 1 || in[0].ID != "00000000-0000-0000-0000-000000000a01" || in[0].EnvironmentName != "sb" ||
+		in[0].Parameters["sourceEntraTenantId"] != sourceTenant {
 		t.Errorf("Incoming() = %+v, %v", in, err)
 	}
 	findRequest(t, srv, http.MethodGet, "/admin/v2.29/transfers/incoming/"+sourceTenant)

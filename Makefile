@@ -11,7 +11,7 @@ FUZZTIME ?= 15s
 
 .PHONY: help
 help: ## Show this help.
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-8s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: test
 test: ## Run the tests with the race detector.
@@ -27,6 +27,10 @@ cover: ## Run the tests and write coverage.html.
 fuzz: ## Run the fuzz targets for FUZZTIME each (default 15s).
 	go test -run='^$$' -fuzz=FuzzResponseErrorDecode -fuzztime=$(FUZZTIME) .
 	go test -run='^$$' -fuzz=FuzzBuild -fuzztime=$(FUZZTIME) ./internal/pathutil
+
+.PHONY: integration
+integration: ## Run the read-only live tests (needs BCADMIN_TENANT_ID, see README).
+	go test -tags integration -count=1 -v ./integration/...
 
 .PHONY: lint
 lint: ## Run golangci-lint.

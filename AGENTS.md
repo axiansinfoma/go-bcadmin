@@ -23,6 +23,8 @@ Business Central Administration Center API. Read README.md for the user view.
 | `time.go` | `Time`, a tolerant timestamp type; use `*Time` for all timestamps in responses. |
 | `version.go` | `DefaultAPIVersion`; module version for the User-Agent from build info. |
 | `bcadmintest/` | Public fake API server for tests (ours and users'); `environments.go` and `apps.go` are stateful fakes of the environment and app endpoints. |
+| `example_test.go` | Godoc examples. Only `ExampleNewClient` has an `// Output:` comment and runs; the others are compiled but not run, so they never call the API (their nil client is a placeholder). |
+| `integration/` | Read-only live tests behind the `integration` build tag (`make integration`); never run in CI, but vetted and linted with the tag. |
 | `internal/pathutil/` | Path segment validation and escaping. |
 | `testdata/` | JSON fixtures, based on the samples in the Microsoft Learn docs. |
 
@@ -38,6 +40,7 @@ make lint     # golangci-lint v2 (config: .golangci.yml)
 make vuln     # govulncheck
 make fuzz     # fuzz targets, FUZZTIME=15s each
 make tidy     # go mod tidy && go mod verify
+make integration # read-only live tests; needs BCADMIN_TENANT_ID and credentials
 make check    # tidy, lint, test, vuln
 ```
 
@@ -181,6 +184,15 @@ make check    # tidy, lint, test, vuln
 - `GORELEASE_VERSION` in ci.yml is a pseudo-version (golang.org/x/exp has no
   tags); check that Renovate proposes updates for it, otherwise bump it by
   hand.
+- `bcadmintest` records at most `DefaultMaxRecordedBody` bytes of each
+  request body (a copy, so a large upload is not kept alive); handlers
+  always get the whole body. Tests asserting large bodies set
+  `WithMaxRecordedBody(-1)`.
+- Integration tests must stay read-only and must not log tenant data
+  (names, IDs, emails); log counts. Error messages of failed calls can
+  contain the environment name and the API's message; they stay in local
+  output, and README tells users to redact them before sharing. Anything
+  that writes needs an explicit opt-in from the person running them.
 - `bcadmintest` patterns use `http.ServeMux` syntax; `applications/` needs
   `applications/{$}` to match only that path.
 - The stateful fakes in `bcadmintest` follow the documented behavior and

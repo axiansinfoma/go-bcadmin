@@ -67,7 +67,10 @@ func (s *AuthorizedAppsService) Authorize(ctx context.Context, appClientID strin
 // (client) ID. It does not revoke admin consent in Microsoft Entra ID or
 // remove permission sets assigned to the app in environments. Unlike for
 // listing and authorizing, the documentation names no restriction on how
-// the call is authenticated.
+// the call is authenticated. A DELETE is retried on server errors and when
+// the response cannot be read, so a retry after a removal that took effect
+// can fail although the app was removed; check [AuthorizedAppsService.List]
+// after an error.
 //
 // DELETE /authorizedAadApps/{appClientId}.
 func (s *AuthorizedAppsService) Remove(ctx context.Context, appClientID string) error {
