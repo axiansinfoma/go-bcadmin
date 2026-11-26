@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -117,8 +118,8 @@ func TestAppsFakeInstallAndDependencies(t *testing.T) {
 func TestAppsFakeUpdate(t *testing.T) {
 	t.Parallel()
 	fake, apps := newAppsFake(t)
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Publisher: "Contoso", Version: "1.0.0.0", CanBeUninstalled: true})
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Publisher: "Contoso", Version: "2.0.0.0", CanBeUninstalled: true})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Publisher: "Contoso", Version: "1.0.0.0", CanBeUninstalled: true})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Publisher: "Contoso", Version: "2.0.0.0", CanBeUninstalled: true})
 	ctx := context.Background()
 
 	updates, err := apps.AvailableUpdates(ctx)
@@ -200,9 +201,9 @@ func TestAppsFakeUpdate(t *testing.T) {
 func TestAppsFakeUninstall(t *testing.T) {
 	t.Parallel()
 	fake, apps := newAppsFake(t)
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Publisher: "Contoso", Version: "1.5.0.0", CanBeUninstalled: true})
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Publisher: "Contoso", Version: "2.2.0.0", CanBeUninstalled: true})
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: "00000000-0000-0000-0000-000000000204", Name: "System", Version: "27.0.0.0"})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Publisher: "Contoso", Version: "1.5.0.0", CanBeUninstalled: true})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Publisher: "Contoso", Version: "2.2.0.0", CanBeUninstalled: true})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: "00000000-0000-0000-0000-000000000204", Name: "System", Version: "27.0.0.0"})
 	ctx := context.Background()
 
 	reqs, err := apps.UninstallRequirements(ctx, baseID)
@@ -326,7 +327,7 @@ func TestAppsFakeDependencyResolution(t *testing.T) {
 		fake.Publish(bcadmintest.App{AppID: xID, Name: "X", Version: "1.0.0.0", Dependencies: []bcadmintest.Dependency{
 			{AppID: aID, MinVersion: "1.0.0.0"}, {AppID: bID, MinVersion: "1.0.0.0"},
 		}})
-		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: aID, Name: "A", Version: "1.0.0.0"})
+		fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: aID, Name: "A", Version: "1.0.0.0"})
 		return fake, apps
 	}
 	ctx := context.Background()
@@ -392,8 +393,8 @@ func TestAppsFakeDependencyResolution(t *testing.T) {
 func TestAppsFakeScheduledNoDowngrade(t *testing.T) {
 	t.Parallel()
 	fake, apps := newAppsFake(t)
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0"})
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0"})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
 	ctx := context.Background()
 	scheduled, err := apps.Update(ctx, connectorID, bcadmin.UpdateAppOptions{TargetVersion: "2.2.0.0", UseEnvironmentUpdateWindow: true, InstallOrUpdateNeededDependencies: true})
 	if err != nil {
@@ -456,7 +457,7 @@ func TestAppsFakeScheduledPTEVersions(t *testing.T) {
 	for _, v := range []string{"1.0.0.0", "1.1.0.0", "2.0.0.0"} {
 		fake.AddPTEFile("p_"+v+".app", bcadmintest.App{AppID: pteID, Name: "P", Version: v})
 	}
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: pteID, Name: "P", Version: "1.0.0.0", AppType: bcadmin.AppTypeTenant, CanBeUninstalled: true})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: pteID, Name: "P", Version: "1.0.0.0", AppType: bcadmin.AppTypeTenant, CanBeUninstalled: true})
 	ctx := context.Background()
 	upload := func(version string, schedule bcadmin.DeploymentSchedule) error {
 		_, err := apps.InstallPTE(ctx, bytes.NewReader([]byte("app")), bcadmin.InstallPTEOptions{
@@ -585,7 +586,7 @@ func TestAppsFakeScheduledRecheck(t *testing.T) {
 		t.Parallel()
 		for _, handle := range []bool{false, true} {
 			fake, apps := newAppsFake(t)
-			fake.Install(bcadmin.FamilyBusinessCentral, "sb", base)
+			fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", base)
 			p, err := apps.Install(ctx, connectorID, bcadmin.InstallAppOptions{AcceptISVEULA: true, UseEnvironmentUpdateWindow: true, InstallOrUpdateNeededDependencies: handle})
 			if err != nil {
 				t.Fatal(err)
@@ -615,7 +616,7 @@ func TestAppsFakeScheduledRecheck(t *testing.T) {
 	t.Run("dependent installed meanwhile", func(t *testing.T) {
 		t.Parallel()
 		fake, apps := newAppsFake(t)
-		fake.Install(bcadmin.FamilyBusinessCentral, "sb", base)
+		fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", base)
 		u, err := apps.Uninstall(ctx, baseID, bcadmin.UninstallAppOptions{UseEnvironmentUpdateWindow: true})
 		if err != nil {
 			t.Fatal(err)
@@ -644,7 +645,7 @@ func TestAppsFakeVersionMatching(t *testing.T) {
 	t.Parallel()
 	fake, apps := newAppsFake(t)
 	fake.AddPTEFile("p.app", bcadmintest.App{AppID: pteID, Name: "P", Version: "2.0.0.0"})
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: pteID, Name: "P", Version: "1.0", AppType: bcadmin.AppTypeTenant})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: pteID, Name: "P", Version: "1.0", AppType: bcadmin.AppTypeTenant})
 	ctx := context.Background()
 	if _, err := apps.InstallPTE(ctx, bytes.NewReader([]byte("app")), bcadmin.InstallPTEOptions{
 		FileName: "p.app", AcceptISVEULA: true, DeploymentSchedule: bcadmin.DeploymentNextMajorUpdate,
@@ -678,8 +679,8 @@ func TestAppsFakeUninstallInteractions(t *testing.T) {
 	seed := func(t *testing.T) (*bcadmintest.Apps, *bcadmin.AppsService) {
 		t.Helper()
 		fake, apps := newAppsFake(t)
-		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
-		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0", CanBeUninstalled: true})
+		fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
+		fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0", CanBeUninstalled: true})
 		return fake, apps
 	}
 
@@ -727,8 +728,8 @@ func TestAppsFakeUninstallInteractions(t *testing.T) {
 	t.Run("protected dependent", func(t *testing.T) {
 		t.Parallel()
 		fake, apps := newAppsFake(t)
-		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
-		fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
+		fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
+		fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
 		if _, err := apps.Uninstall(ctx, baseID, bcadmin.UninstallAppOptions{UninstallDependents: true}); bcadmin.ErrorCode(err) != "appCannotBeUninstalled" {
 			t.Errorf("uninstall with a protected dependent: %v", err)
 		}
@@ -743,8 +744,8 @@ func TestAppsFakeUninstallInteractions(t *testing.T) {
 func TestAppsFakeResults(t *testing.T) {
 	t.Parallel()
 	fake, apps := newAppsFake(t)
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0"})
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0"})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: connectorID, Name: "Contoso Connector", Version: "2.0.0.0"})
 	ctx := context.Background()
 	baseUpdate, err := apps.Update(ctx, baseID, bcadmin.UpdateAppOptions{TargetVersion: "1.5.0.0", UseEnvironmentUpdateWindow: true})
 	if err != nil {
@@ -809,11 +810,33 @@ func TestAppsFakeRemoveScheduledKeepsResult(t *testing.T) {
 	}
 
 	const devID = "00000000-0000-0000-0000-000000000231"
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: baseID, Name: "Contoso Base", Version: "1.0.0.0", CanBeUninstalled: true})
 	fake.AddPTEFile("dev.app", bcadmintest.App{AppID: devID, Name: "Dev", Version: "1.0.0.0", Dependencies: []bcadmintest.Dependency{{AppID: baseID, MinVersion: "1.0.0.0"}}})
-	fake.Install(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: devID, Name: "Dev", Version: "1.0.0.0", AppType: bcadmin.AppTypeDev})
+	fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: devID, Name: "Dev", Version: "1.0.0.0", AppType: bcadmin.AppTypeDev})
 	reqs, err := apps.UninstallRequirements(ctx, baseID)
 	if err != nil || len(reqs) != 1 || reqs[0].Type != "DEV" {
 		t.Errorf("UninstallRequirements() = %+v, %v", reqs, err)
+	}
+}
+
+// TestAppsFakeInstalledOrder checks that apps with the same name are listed
+// in a stable order.
+func TestAppsFakeInstalledOrder(t *testing.T) {
+	t.Parallel()
+	fake, apps := newAppsFake(t)
+	for _, id := range []string{"00000000-0000-0000-0000-000000000244", "00000000-0000-0000-0000-000000000241", "00000000-0000-0000-0000-000000000243", "00000000-0000-0000-0000-000000000242"} {
+		fake.AddInstalled(bcadmin.FamilyBusinessCentral, "sb", bcadmin.InstalledApp{AppID: id, Name: "Same"})
+	}
+	for range 5 {
+		got := fake.Installed(bcadmin.FamilyBusinessCentral, "sb")
+		list, err := apps.List(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range got {
+			if want := fmt.Sprintf("00000000-0000-0000-0000-00000000024%d", i+1); got[i].AppID != want || list[i].AppID != want {
+				t.Fatalf("order = %v / %v", got, list)
+			}
+		}
 	}
 }

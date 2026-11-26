@@ -20,7 +20,7 @@ import (
 // Apps is an in-memory fake of the app management and per-tenant extension
 // endpoints, created with [Server.EnableApps]. It keeps a catalog of
 // published global app versions ([Apps.Publish]) and the installed apps of
-// every environment ([Apps.Install]); environments need not exist in an
+// every environment ([Apps.AddInstalled]); environments need not exist in an
 // [Environments] fake.
 //
 // Install, update and uninstall operations started through the API start
@@ -55,14 +55,14 @@ import (
 // documented; the fake does.
 //
 // Like the service, the fake requires acceptIsvEula for installs, refuses
-// missing dependencies (and dependents on uninstall) with code
-// EntityValidationFailed and the apps in data.requirements unless the
-// request asks to handle them, accepts one request per app at a time
+// missing dependencies (and dependents on uninstall) with status 400 and the
+// apps in data.requirements unless the request asks to handle them, accepts one request per app at a time
 // (installing or updating an app as a dependency of another operation is not
 // blocked by the app's own pending operation), and
 // answers removeScheduledPteVersion for an unknown entry with
 // ResourceDoesNotExist (404). Where the documentation names no error code,
-// it uses appNotFound (404), appNotInstalled (404), operationNotFound (404),
+// it uses EntityValidationFailed (400, the requirements errors above),
+// appNotFound (404), appNotInstalled (404), operationNotFound (404),
 // appAlreadyInstalled (409), appOperationInProgress (409), versionNotFound
 // (400), invalidTargetVersion (400), eulaNotAccepted (400),
 // appCannotBeUninstalled (400), operationNotScheduled (400) and invalidInput
@@ -182,13 +182,13 @@ func (a *Apps) AddPTEFile(fileName string, app App) {
 	a.ptes[strings.ToLower(fileName)] = cloneApp(app)
 }
 
-// Install stores app as installed in the environment family/environment,
+// AddInstalled stores app as installed in the environment family/environment,
 // replacing an app with the same ID. Empty State defaults to Installed and
 // empty AppType to global. CanBeUninstalled is stored as given: set it to
 // true for apps a test uninstalls. The fake knows the dependencies of a
 // stored app only when its version is published ([Apps.Publish]) or a
 // registered PTE file ([Apps.AddPTEFile]).
-func (a *Apps) Install(family, environment string, app bcadmin.InstalledApp) {
+func (a *Apps) AddInstalled(family, environment string, app bcadmin.InstalledApp) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if app.State == "" {
@@ -201,7 +201,7 @@ func (a *Apps) Install(family, environment string, app bcadmin.InstalledApp) {
 }
 
 // Installed returns the apps installed in the environment family/environment,
-// sorted by name.
+// sorted by name and app ID.
 func (a *Apps) Installed(family, environment string) []bcadmin.InstalledApp {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -263,7 +263,9 @@ func (a *Apps) list(key string) []bcadmin.InstalledApp {
 	for _, app := range a.installed[key] {
 		out = append(out, *app)
 	}
-	slices.SortFunc(out, func(x, y bcadmin.InstalledApp) int { return strings.Compare(x.Name, y.Name) })
+	slices.SortFunc(out, func(x, y bcadmin.InstalledApp) int {
+		return cmp.Or(strings.Compare(x.Name, y.Name), strings.Compare(strings.ToLower(x.AppID), strings.ToLower(y.AppID)))
+	})
 	return out
 }
 

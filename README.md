@@ -264,7 +264,7 @@ envs.FailNextOperation("simulated failure")
 apps := srv.EnableApps()
 apps.Publish(bcadmintest.App{AppID: appID, Name: "Contoso Connector", Version: "2.0.0.0"})
 apps.AddPTEFile("Contoso_MyApp_1.0.0.0.app", bcadmintest.App{AppID: pteID, Name: "My App", Version: "1.0.0.0"})
-apps.RunScheduled(bcadmin.FamilyBusinessCentral, "Production") // run operations scheduled for the update window
+apps.RunScheduled(bcadmin.FamilyBusinessCentral, "Production") // release scheduled operations; they run when polled
 
 // Or handlers for single endpoints.
 srv.HandleJSON(http.MethodGet, "environments/quotas", http.StatusOK, map[string]any{
